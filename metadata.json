@@ -1,0 +1,6 @@
+{
+  "name": "MotoFix Garage - Receipt Scanner & Inventory",
+  "description": "Local-first motorbike repair shop inventory manager, open-source Tesseract OCR receipt scanning, and Google Drive archiving.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
