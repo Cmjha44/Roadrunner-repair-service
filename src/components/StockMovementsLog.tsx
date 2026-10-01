@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { History, ArrowDownRight, ArrowUpRight, Wrench, Package, RefreshCw } from "lucide-react";
 import { StockMovement } from "../types.ts";
+import { formatNpr } from "../utils/currency.ts";
 
 export const StockMovementsLog: React.FC = () => {
   const [movements, setMovements] = useState<StockMovement[]>([]);
@@ -123,7 +124,7 @@ export const StockMovementsLog: React.FC = () => {
                       </td>
 
                       <td className="py-3 px-4 text-right font-mono text-slate-400">
-                        {m.unit_cost ? `$${Number(m.unit_cost).toFixed(2)}` : "—"}
+                        {m.unit_cost ? formatNpr(m.unit_cost) : "—"}
                       </td>
                     </tr>
                   );

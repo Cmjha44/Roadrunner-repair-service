@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import {
   TrendingUp,
-  DollarSign,
+  Coins,
   Package,
   Layers,
   Sparkles,
@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Flame,
 } from "lucide-react";
+import { formatNpr } from "../utils/currency.ts";
 
 export interface TopSellingItem {
   fullName: string;
@@ -130,14 +131,14 @@ export const TopSellingPartsChart: React.FC<TopSellingPartsChartProps> = ({
             <div className="bg-slate-950 p-2 rounded border border-slate-800">
               <span className="text-slate-400 block text-[10px] uppercase">Total Revenue</span>
               <span className="text-emerald-400 font-bold text-sm">
-                ${item.revenue.toFixed(2)}
+                {formatNpr(item.revenue)}
               </span>
             </div>
           </div>
 
           <div className="flex items-center justify-between text-[11px] pt-1 text-slate-400 font-mono">
             <span>Avg Sale Price:</span>
-            <span className="text-slate-200 font-bold">${item.avgUnitPrice.toFixed(2)}</span>
+            <span className="text-slate-200 font-bold">{formatNpr(item.avgUnitPrice)}</span>
           </div>
 
           {item.currentStock !== null && (
@@ -220,8 +221,8 @@ export const TopSellingPartsChart: React.FC<TopSellingPartsChartProps> = ({
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              <DollarSign className="w-3.5 h-3.5" />
-              <span>Revenue ($)</span>
+              <Coins className="w-3.5 h-3.5" />
+              <span>Revenue (NPR)</span>
             </button>
           </div>
 
@@ -251,7 +252,7 @@ export const TopSellingPartsChart: React.FC<TopSellingPartsChartProps> = ({
               {topItem?.fullName || "No sales in period"}
             </p>
             <p className="text-[11px] font-mono text-amber-400">
-              {topItem ? `${topItem.quantity} units ($${topItem.revenue.toFixed(2)})` : "—"}
+              {topItem ? `${topItem.quantity} units (${formatNpr(topItem.revenue)})` : "—"}
             </p>
           </div>
         </div>
@@ -273,14 +274,14 @@ export const TopSellingPartsChart: React.FC<TopSellingPartsChartProps> = ({
         {/* Total Parts Revenue */}
         <div className="bg-slate-950 border border-slate-800/80 rounded-xl p-3.5 flex items-center space-x-3">
           <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-            <DollarSign className="w-5 h-5" />
+            <Coins className="w-5 h-5" />
           </div>
           <div>
             <span className="text-[10px] font-mono uppercase text-slate-400 tracking-wider">
               Spare Parts Sales Revenue
             </span>
             <p className="text-lg font-black text-emerald-400 font-mono">
-              ${totalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatNpr(totalRevenue)}
             </p>
             <p className="text-[11px] text-slate-400">From counter sell receipts</p>
           </div>
@@ -327,7 +328,7 @@ export const TopSellingPartsChart: React.FC<TopSellingPartsChartProps> = ({
                   axisLine={false}
                   tick={{ fill: "#94a3b8", fontFamily: "monospace" }}
                   tickFormatter={(val) =>
-                    metricMode === "revenue" ? `$${val}` : `${val}`
+                    metricMode === "revenue" ? `NPR ${val}` : `${val}`
                   }
                 />
                 <Tooltip content={<CustomTooltip />} cursor={{ fill: "#1e293b", opacity: 0.6 }} />

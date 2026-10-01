@@ -9,7 +9,7 @@ import {
   ArrowDown,
   Eye,
   FileText,
-  DollarSign,
+  Coins,
   Package,
   Layers,
   CheckCircle,
@@ -19,6 +19,7 @@ import {
   Filter,
 } from "lucide-react";
 import { ReceiptRecord, ReceiptItemDetail } from "../types.ts";
+import { formatNpr } from "../utils/currency.ts";
 
 interface ReceiptHistoryProps {
   onRefreshTrigger?: number;
@@ -124,14 +125,14 @@ export const ReceiptHistory: React.FC<ReceiptHistoryProps> = ({ onRefreshTrigger
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm flex items-center space-x-3">
           <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
-            <DollarSign className="w-5 h-5" />
+            <Coins className="w-5 h-5" />
           </div>
           <div>
             <p className="text-[11px] font-mono uppercase tracking-wider text-slate-400">
               Total Expenses (Filtered)
             </p>
             <p className="text-xl font-black text-amber-400 font-mono">
-              ${totalExpense.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatNpr(totalExpense)}
             </p>
           </div>
         </div>
@@ -360,7 +361,7 @@ export const ReceiptHistory: React.FC<ReceiptHistoryProps> = ({ onRefreshTrigger
 
                     {/* Total Amount */}
                     <td className="py-3 px-4 text-right font-mono font-black text-sm text-emerald-400">
-                      ${Number(r.total_amount).toFixed(2)}
+                      {formatNpr(r.total_amount)}
                     </td>
 
                     {/* One-Click Google Drive Link */}
@@ -441,19 +442,19 @@ export const ReceiptHistory: React.FC<ReceiptHistoryProps> = ({ onRefreshTrigger
                   <div>
                     <span className="text-slate-500 block">SUBTOTAL</span>
                     <span className="font-bold text-slate-200">
-                      ${Number(receiptDetails.receipt.subtotal || 0).toFixed(2)}
+                      {formatNpr(receiptDetails.receipt.subtotal || 0)}
                     </span>
                   </div>
                   <div>
                     <span className="text-slate-500 block">TAX</span>
                     <span className="font-bold text-slate-200">
-                      ${Number(receiptDetails.receipt.tax || 0).toFixed(2)}
+                      {formatNpr(receiptDetails.receipt.tax || 0)}
                     </span>
                   </div>
                   <div>
                     <span className="text-slate-500 block">TOTAL AMOUNT</span>
                     <span className="font-extrabold text-emerald-400 text-sm">
-                      ${Number(receiptDetails.receipt.total_amount).toFixed(2)}
+                      {formatNpr(receiptDetails.receipt.total_amount)}
                     </span>
                   </div>
                   <div>
@@ -495,10 +496,10 @@ export const ReceiptHistory: React.FC<ReceiptHistoryProps> = ({ onRefreshTrigger
                               {it.quantity}
                             </td>
                             <td className="py-2 px-3 text-right font-mono">
-                              ${Number(it.unit_price).toFixed(2)}
+                              {formatNpr(it.unit_price)}
                             </td>
                             <td className="py-2 px-3 text-right font-mono font-bold text-white">
-                              ${Number(it.total_price).toFixed(2)}
+                              {formatNpr(it.total_price)}
                             </td>
                           </tr>
                         ))}

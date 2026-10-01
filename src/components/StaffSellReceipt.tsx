@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { StaffSession, StaffInventoryItem, SaleReceipt } from "../types.ts";
+import { formatNpr } from "../utils/currency.ts";
 import {
   ShoppingCart,
   Search,
@@ -333,7 +334,7 @@ export function StaffSellReceipt({
                             {item.name}
                           </span>
                           <span className="text-xs font-mono font-bold text-amber-400 shrink-0 ml-1">
-                            ${Number(item.selling_price || 0).toFixed(2)}
+                            {formatNpr(item.selling_price || 0)}
                           </span>
                         </div>
                         <div className="flex items-center space-x-2 mt-1.5 text-[11px] font-mono text-slate-400">
@@ -477,7 +478,7 @@ export function StaffSellReceipt({
                         <div className="flex-1 mr-2 min-w-0">
                           <p className="font-semibold text-slate-200 truncate">{item.part_name}</p>
                           <p className="text-[11px] text-slate-500 font-mono">
-                            ${item.unit_price.toFixed(2)} ea • {item.sku}
+                            {formatNpr(item.unit_price)} ea • {item.sku}
                           </p>
                         </div>
 
@@ -504,8 +505,8 @@ export function StaffSellReceipt({
 
                         {/* Line Total & Remove */}
                         <div className="flex items-center space-x-2">
-                          <span className="font-mono font-bold text-amber-400 w-16 text-right">
-                            ${(item.quantity * item.unit_price).toFixed(2)}
+                          <span className="font-mono font-bold text-amber-400 w-24 text-right">
+                            {formatNpr(item.quantity * item.unit_price)}
                           </span>
                           <button
                             type="button"
@@ -572,15 +573,15 @@ export function StaffSellReceipt({
               <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-1.5 text-xs font-mono mb-4">
                 <div className="flex justify-between text-slate-400">
                   <span>Subtotal:</span>
-                  <span>${subtotal.toFixed(2)}</span>
+                  <span>{formatNpr(subtotal)}</span>
                 </div>
                 <div className="flex justify-between text-slate-400">
                   <span>Shop Sales Tax (8.0%):</span>
-                  <span>${tax.toFixed(2)}</span>
+                  <span>{formatNpr(tax)}</span>
                 </div>
                 <div className="flex justify-between text-base font-bold text-white pt-1.5 border-t border-slate-800">
                   <span>Total Due:</span>
-                  <span className="text-emerald-400">${totalAmount.toFixed(2)}</span>
+                  <span className="text-emerald-400">{formatNpr(totalAmount)}</span>
                 </div>
               </div>
             </div>
@@ -603,7 +604,7 @@ export function StaffSellReceipt({
               ) : (
                 <>
                   <Receipt className="w-4 h-4" />
-                  <span>Log Sell Receipt (${totalAmount.toFixed(2)})</span>
+                  <span>Log Sell Receipt ({formatNpr(totalAmount)})</span>
                 </>
               )}
             </button>
@@ -686,7 +687,7 @@ export function StaffSellReceipt({
                   <div key={idx} className="flex justify-between text-[11px] leading-tight">
                     <span className="truncate max-w-[200px]">{it.part_name}</span>
                     <span className="shrink-0 font-mono">
-                      {it.quantity} × ${it.unit_price.toFixed(2)} = ${(it.quantity * it.unit_price).toFixed(2)}
+                      {it.quantity} × {formatNpr(it.unit_price)} = {formatNpr(it.quantity * it.unit_price)}
                     </span>
                   </div>
                 ))}
@@ -696,15 +697,15 @@ export function StaffSellReceipt({
               <div className="space-y-1 text-right text-xs">
                 <div className="flex justify-between text-slate-600">
                   <span>Subtotal:</span>
-                  <span>${completedSale.subtotal.toFixed(2)}</span>
+                  <span>{formatNpr(completedSale.subtotal)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Tax (8%):</span>
-                  <span>${completedSale.tax.toFixed(2)}</span>
+                  <span>{formatNpr(completedSale.tax)}</span>
                 </div>
                 <div className="flex justify-between font-black text-sm text-slate-950 pt-1 border-t border-slate-400">
                   <span>TOTAL PAID:</span>
-                  <span>${completedSale.total_amount.toFixed(2)}</span>
+                  <span>{formatNpr(completedSale.total_amount)}</span>
                 </div>
               </div>
 

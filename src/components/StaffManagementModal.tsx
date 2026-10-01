@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { StaffUser, SaleReceipt } from "../types.ts";
+import { formatNpr } from "../utils/currency.ts";
 import {
   Users,
   Link,
@@ -16,7 +17,6 @@ import {
   X,
   AlertCircle,
   Receipt,
-  DollarSign,
 } from "lucide-react";
 
 interface StaffManagementModalProps {
@@ -560,7 +560,7 @@ export function StaffManagementModal({
 
                 <div className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-mono">
                   <span className="text-slate-400 mr-2">Total Sales Revenue:</span>
-                  <span className="text-emerald-400 font-bold">${totalSalesRevenue.toFixed(2)}</span>
+                  <span className="text-emerald-400 font-bold">{formatNpr(totalSalesRevenue)}</span>
                 </div>
               </div>
 
@@ -603,7 +603,7 @@ export function StaffManagementModal({
                             </span>
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">
-                            ${Number(sale.total_amount).toFixed(2)}
+                            {formatNpr(sale.total_amount)}
                           </td>
                         </tr>
                       ))}

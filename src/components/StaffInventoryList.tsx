@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { StaffInventoryItem, GARAGE_CATEGORIES } from "../types.ts";
+import { formatNpr } from "../utils/currency.ts";
 import {
   Search,
   Package,
@@ -207,7 +208,7 @@ export function StaffInventoryList({ onSelectItemForSale }: StaffInventoryListPr
                         )}
                       </td>
                       <td className="py-3 px-4 text-right font-mono font-bold text-amber-400 text-sm">
-                        ${Number(item.selling_price || 0).toFixed(2)}
+                        {formatNpr(item.selling_price || 0)}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <button

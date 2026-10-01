@@ -11,7 +11,22 @@ import { StaffManagementModal } from "./components/StaffManagementModal.tsx";
 import { NotificationCenterModal } from "./components/NotificationCenterModal.tsx";
 import { LowStockBanner } from "./components/LowStockBanner.tsx";
 import { ParsedReceiptData, DriveConfigStatus } from "./types.ts";
-import { CheckCircle2, ExternalLink, Cloud, X, Users, ArrowRight } from "lucide-react";
+import {
+  initAuth,
+  googleSignIn,
+  googleLogout,
+  getAccessToken,
+} from "./services/googleAuth.ts";
+import { User } from "firebase/auth";
+import {
+  CheckCircle2,
+  ExternalLink,
+  Cloud,
+  X,
+  Users,
+  ArrowRight,
+  ShieldAlert,
+} from "lucide-react";
 
 export default function App() {
   // Check if URL specifies the staff branch link (?portal=staff or /staff)
@@ -24,6 +39,11 @@ export default function App() {
   const [isStaffManagementOpen, setIsStaffManagementOpen] = useState(false);
   const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"scan" | "inventory" | "ledger" | "movements">("scan");
+
+  // Google Authentication state
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   // Verification Screen state
   const [verificationData, setVerificationData] = useState<{
@@ -44,6 +64,72 @@ export default function App() {
     receiptId: string;
     driveLink: string;
   } | null>(null);
+
+  // Initialize Firebase Auth listener on mount
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (user, token) => {
+        setCurrentUser(user);
+        if (token) {
+          fetch("/api/auth/google/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accessToken: token,
+              email: user.email,
+              displayName: user.displayName,
+              photoURL: user.photoURL,
+            }),
+          }).catch((e) => console.warn("Failed session ping:", e));
+        }
+      },
+      () => {
+        setCurrentUser(null);
+      }
+    );
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  const handleSignInWithGoogle = async () => {
+    setIsSigningIn(true);
+    setAuthError(null);
+    try {
+      const res = await googleSignIn();
+      if (res?.user) {
+        setCurrentUser(res.user);
+        fetchGarageMeta();
+      }
+    } catch (err: any) {
+      if (
+        err?.code === "auth/popup-closed-by-user" ||
+        err?.message?.includes("auth/popup-closed-by-user")
+      ) {
+        // User voluntarily dismissed popup; do not set scary error toast
+        return;
+      }
+      console.error("Sign in failed:", err);
+      let errorMsg = err?.message || "Google Sign-in failed. Please check permissions.";
+      if (
+        err?.message?.includes("access_denied") ||
+        err?.code === "auth/unauthorized-domain" ||
+        err?.message?.includes("verification process") ||
+        err?.message?.includes("403")
+      ) {
+        errorMsg = "Google OAuth 403 (Unverified App / Testing Mode): In Google Cloud Console, your OAuth Consent Screen is currently in 'Testing' mode. To sign in with 'roadrunner.motorepair@gmail.com', add it under Google Cloud Console > APIs & Services > OAuth consent screen > Test users, or sign in with the project owner account (chandra.jha44@gmail.com).";
+      }
+      setAuthError(errorMsg);
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleSignOutGoogle = async () => {
+    await googleLogout();
+    setCurrentUser(null);
+    fetchGarageMeta();
+  };
 
   // Fetch low stock count and drive status
   const fetchGarageMeta = async () => {
@@ -111,11 +197,14 @@ export default function App() {
       <Header
         activeTab={activeTab}
         setActiveTab={(tab) => {
-          // If navigating away, keep or cancel verification
           setActiveTab(tab);
         }}
         lowStockCount={lowStockCount}
         driveStatus={driveStatus}
+        currentUser={currentUser}
+        isSigningIn={isSigningIn}
+        onSignInWithGoogle={handleSignInWithGoogle}
+        onSignOutGoogle={handleSignOutGoogle}
         onOpenDriveSettings={() => setIsDriveModalOpen(true)}
         onOpenStaffManagement={() => setIsStaffManagementOpen(true)}
         onOpenNotificationCenter={() => setIsNotificationModalOpen(true)}
@@ -126,6 +215,46 @@ export default function App() {
           window.history.replaceState({}, "", url.toString());
         }}
       />
+
+      {/* Google Sign-In Prompt Banner if not authenticated */}
+      {!currentUser && (
+        <div className="bg-gradient-to-r from-sky-950/80 via-slate-900 to-amber-950/40 border-b border-sky-800/50 text-xs px-4 py-2.5">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+            <div className="flex items-center space-x-2 text-slate-200">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0"></span>
+              <span>
+                <strong>Road Runner Moto Repair Shop Cloud Sync:</strong> Sign in with your Gmail account to automatically save all workshop receipts and inventory records into your Google Drive folder.
+              </span>
+            </div>
+            <button
+              onClick={handleSignInWithGoogle}
+              disabled={isSigningIn}
+              className="flex items-center space-x-1.5 px-3 py-1 bg-white hover:bg-slate-100 text-slate-900 font-bold rounded shadow text-xs shrink-0 cursor-pointer"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"/>
+                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24Z"/>
+                <path fill="#FBBC05" d="M5.28 14.27a7.195 7.195 0 0 1 0-4.54V6.58H1.25a11.96 11.96 0 0 0 0 10.84l4.03-3.15Z"/>
+                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98Z"/>
+              </svg>
+              <span>{isSigningIn ? "Connecting..." : "Sign in with Google"}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Auth Error Toast if any */}
+      {authError && (
+        <div className="bg-red-950/90 border-b border-red-800 text-red-200 text-xs py-2 px-4 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <ShieldAlert className="w-4 h-4 text-red-400" />
+            <span>{authError}</span>
+          </div>
+          <button onClick={() => setAuthError(null)} className="text-red-400 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Persistent Low-Stock Alert Banner for Shop Owner */}
       <LowStockBanner
@@ -141,7 +270,7 @@ export default function App() {
               Owner Mode
             </span>
             <span>
-              Counter Staff Branch Link available: Technicians &amp; Cashiers can only log sell receipts and browse catalog stock.
+              Road Runner Staff Terminal Link active: Technicians &amp; Cashiers can log sell receipts with stock auto-deducted.
             </span>
           </div>
           <div className="flex items-center space-x-2">
@@ -150,7 +279,7 @@ export default function App() {
               className="text-amber-400 hover:text-amber-300 font-mono font-bold underline flex items-center"
             >
               <Users className="w-3.5 h-3.5 mr-1" />
-              <span>Copy Staff Link &amp; Manage Accounts</span>
+              <span>Staff Link &amp; Access Codes</span>
             </button>
             <span className="text-slate-600">|</span>
             <button
@@ -176,7 +305,7 @@ export default function App() {
             <div className="flex items-center space-x-2 text-xs sm:text-sm font-semibold">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>
-                Receipt successfully committed to local SQLite database &amp; inventory synced!
+                Receipt committed &amp; synced to Google Drive &amp; SQLite database!
               </span>
               {commitToast.driveLink && (
                 <a
@@ -186,7 +315,7 @@ export default function App() {
                   className="ml-2 inline-flex items-center text-sky-400 hover:text-sky-300 underline font-mono text-xs"
                 >
                   <Cloud className="w-3.5 h-3.5 mr-1" />
-                  View Archived Document
+                  View in Google Drive
                   <ExternalLink className="w-3 h-3 ml-1" />
                 </a>
               )}
@@ -223,6 +352,7 @@ export default function App() {
               <InventoryDashboard
                 onRefreshTrigger={refreshTrigger}
                 onOpenNotificationCenter={() => setIsNotificationModalOpen(true)}
+                onViewReceiptsLedger={() => setActiveTab("ledger")}
               />
             )}
 
@@ -241,6 +371,8 @@ export default function App() {
         onClose={() => setIsDriveModalOpen(false)}
         status={driveStatus}
         onStatusUpdated={fetchGarageMeta}
+        currentUser={currentUser}
+        onSignInWithGoogle={handleSignInWithGoogle}
       />
 
       {/* Staff Management & Branch Link Modal */}
@@ -271,7 +403,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-slate-900 py-4 text-center text-xs text-slate-500 font-mono">
-        MotoFix Garage OS • Local-First SQLite Database • Role Guard Staff Portal • Google Drive Cloud Backup
+        Road Runner Moto Repair Shop OS • Local-First SQLite Database • Role Guard Staff Portal • Google Drive Cloud Sync
       </footer>
     </div>
   );

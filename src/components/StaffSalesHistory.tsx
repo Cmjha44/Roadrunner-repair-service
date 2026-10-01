@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { StaffSession, SaleReceipt } from "../types.ts";
 import { Receipt, Calendar, User, Bike, CreditCard, Search, RefreshCw, Printer, X } from "lucide-react";
+import { formatNpr } from "../utils/currency.ts";
 
 interface StaffSalesHistoryProps {
   staffSession: StaffSession;
@@ -128,7 +129,7 @@ export function StaffSalesHistory({ staffSession, refreshTrigger = 0 }: StaffSal
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right font-mono font-bold text-emerald-400 text-sm">
-                      ${Number(sale.total_amount).toFixed(2)}
+                      {formatNpr(sale.total_amount)}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <button
@@ -211,7 +212,7 @@ export function StaffSalesHistory({ staffSession, refreshTrigger = 0 }: StaffSal
                   <div key={idx} className="flex justify-between text-[11px]">
                     <span className="truncate max-w-[200px]">{it.part_name}</span>
                     <span>
-                      {it.quantity} × ${it.unit_price.toFixed(2)} = ${(it.quantity * it.unit_price).toFixed(2)}
+                      {it.quantity} × {formatNpr(it.unit_price)} = {formatNpr(it.quantity * it.unit_price)}
                     </span>
                   </div>
                 ))}
@@ -220,15 +221,15 @@ export function StaffSalesHistory({ staffSession, refreshTrigger = 0 }: StaffSal
               <div className="space-y-0.5 text-right text-xs">
                 <div className="flex justify-between text-slate-600">
                   <span>Subtotal:</span>
-                  <span>${selectedReceipt.subtotal.toFixed(2)}</span>
+                  <span>{formatNpr(selectedReceipt.subtotal)}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Tax (8%):</span>
-                  <span>${selectedReceipt.tax.toFixed(2)}</span>
+                  <span>{formatNpr(selectedReceipt.tax)}</span>
                 </div>
                 <div className="flex justify-between font-black text-sm text-slate-950 pt-1 border-t border-slate-300">
                   <span>TOTAL:</span>
-                  <span>${selectedReceipt.total_amount.toFixed(2)}</span>
+                  <span>{formatNpr(selectedReceipt.total_amount)}</span>
                 </div>
               </div>
             </div>

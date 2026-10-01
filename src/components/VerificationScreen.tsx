@@ -21,6 +21,7 @@ import {
   GARAGE_CATEGORIES,
   GarageCategory,
 } from "../types.ts";
+import { formatNpr } from "../utils/currency.ts";
 
 interface VerificationScreenProps {
   initialData: ParsedReceiptData;
@@ -352,16 +353,16 @@ export const VerificationScreen: React.FC<VerificationScreenProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
               <div>
                 <label className="block text-[11px] font-semibold text-slate-300 uppercase font-mono mb-1">
-                  Calculated Subtotal ($)
+                  Calculated Subtotal (NPR)
                 </label>
                 <div className="px-2.5 py-1.5 bg-slate-950/70 border border-slate-800 rounded-md text-slate-300 text-xs font-mono">
-                  ${itemsSubtotal.toFixed(2)}
+                  {formatNpr(itemsSubtotal)}
                 </div>
               </div>
 
               <div>
                 <label className="block text-[11px] font-semibold text-slate-300 uppercase font-mono mb-1">
-                  Tax Amount ($)
+                  Tax Amount (NPR)
                 </label>
                 <input
                   type="number"
@@ -374,7 +375,7 @@ export const VerificationScreen: React.FC<VerificationScreenProps> = ({
 
               <div>
                 <label className="block text-[11px] font-semibold text-slate-300 uppercase font-mono mb-1">
-                  Grand Total ($)
+                  Grand Total (NPR)
                 </label>
                 <div className="flex items-center space-x-1.5">
                   <input
@@ -392,7 +393,7 @@ export const VerificationScreen: React.FC<VerificationScreenProps> = ({
                     <button
                       type="button"
                       onClick={() => setTotalAmount(calculatedGrandTotal)}
-                      title={`Sync to items sum ($${calculatedGrandTotal})`}
+                      title={`Sync to items sum (${formatNpr(calculatedGrandTotal)})`}
                       className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-[10px] font-mono whitespace-nowrap"
                     >
                       Sync
@@ -404,8 +405,8 @@ export const VerificationScreen: React.FC<VerificationScreenProps> = ({
 
             {hasDiscrepancy && (
               <p className="text-[11px] text-amber-400/90 font-mono">
-                Notice: Line items + tax (${calculatedGrandTotal}) differs from receipt total ($
-                {Number(totalAmount).toFixed(2)}). You can click Sync or adjust line items.
+                Notice: Line items + tax ({formatNpr(calculatedGrandTotal)}) differs from receipt total (
+                {formatNpr(totalAmount)}). You can click Sync or adjust line items.
               </p>
             )}
           </div>
@@ -512,7 +513,7 @@ export const VerificationScreen: React.FC<VerificationScreenProps> = ({
                       </div>
 
                       <div className="flex items-center space-x-1">
-                        <span className="text-[10px] text-slate-400 font-mono">COST $:</span>
+                        <span className="text-[10px] text-slate-400 font-mono">COST:</span>
                         <input
                           type="number"
                           step="0.01"
@@ -528,7 +529,7 @@ export const VerificationScreen: React.FC<VerificationScreenProps> = ({
                       <div className="flex items-center space-x-1">
                         <span className="text-[10px] text-slate-400 font-mono">TOTAL:</span>
                         <span className="font-mono font-bold text-slate-200">
-                          ${(Number(item.quantity || 0) * Number(item.unit_price || 0)).toFixed(2)}
+                          {formatNpr(Number(item.quantity || 0) * Number(item.unit_price || 0))}
                         </span>
                       </div>
                     </div>

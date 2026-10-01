@@ -36,8 +36,8 @@ function createReceiptSvgDataUri({
       <text x="0" y="0" font-family="'Courier New', monospace" font-size="12" font-weight="bold" fill="#111827">${it.name}</text>
       <text x="0" y="16" font-family="'Courier New', monospace" font-size="10" fill="#4B5563">SKU: ${it.sku} [${it.cat}]</text>
       <text x="260" y="0" font-family="'Courier New', monospace" font-size="12" text-anchor="middle" fill="#111827">${it.qty}</text>
-      <text x="330" y="0" font-family="'Courier New', monospace" font-size="12" text-anchor="end" fill="#111827">$${it.unit.toFixed(2)}</text>
-      <text x="410" y="0" font-family="'Courier New', monospace" font-size="12" font-weight="bold" text-anchor="end" fill="#111827">$${it.total.toFixed(2)}</text>
+      <text x="330" y="0" font-family="'Courier New', monospace" font-size="12" text-anchor="end" fill="#111827">NPR ${it.unit.toFixed(2)}</text>
+      <text x="410" y="0" font-family="'Courier New', monospace" font-size="12" font-weight="bold" text-anchor="end" fill="#111827">NPR ${it.total.toFixed(2)}</text>
       <line x1="0" y1="26" x2="410" y2="26" stroke="#E5E7EB" stroke-width="1" stroke-dasharray="3,3" />
     </g>
   `
@@ -77,14 +77,14 @@ function createReceiptSvgDataUri({
     <g transform="translate(220, ${startY})">
       <line x1="0" y1="0" x2="216" y2="0" stroke="#0F172A" stroke-width="1.5" stroke-dasharray="4,4" />
       <text x="0" y="24" font-family="'Courier New', monospace" font-size="12" fill="#334155">SUBTOTAL:</text>
-      <text x="216" y="24" font-family="'Courier New', monospace" font-size="12" text-anchor="end" fill="#334155">$${subtotal.toFixed(2)}</text>
+      <text x="216" y="24" font-family="'Courier New', monospace" font-size="12" text-anchor="end" fill="#334155">NPR ${subtotal.toFixed(2)}</text>
       
       <text x="0" y="44" font-family="'Courier New', monospace" font-size="12" fill="#334155">TAX (8.0%):</text>
-      <text x="216" y="44" font-family="'Courier New', monospace" font-size="12" text-anchor="end" fill="#334155">$${tax.toFixed(2)}</text>
+      <text x="216" y="44" font-family="'Courier New', monospace" font-size="12" text-anchor="end" fill="#334155">NPR ${tax.toFixed(2)}</text>
       
       <line x1="0" y1="56" x2="216" y2="56" stroke="#0F172A" stroke-width="1" />
-      <text x="0" y="76" font-family="'Courier New', monospace" font-size="15" font-weight="bold" fill="#0F172A">TOTAL USD:</text>
-      <text x="216" y="76" font-family="'Courier New', monospace" font-size="16" font-weight="bold" text-anchor="end" fill="#0F172A">$${total.toFixed(2)}</text>
+      <text x="0" y="76" font-family="'Courier New', monospace" font-size="15" font-weight="bold" fill="#0F172A">TOTAL NPR:</text>
+      <text x="216" y="76" font-family="'Courier New', monospace" font-size="16" font-weight="bold" text-anchor="end" fill="#0F172A">NPR ${total.toFixed(2)}</text>
     </g>
 
     <!-- Footer Barcode & Stamp -->

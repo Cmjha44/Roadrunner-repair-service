@@ -105,6 +105,8 @@ export interface StockMovement {
 export interface DriveConfigStatus {
   configured: boolean;
   folderId: string;
+  folderName?: string;
+  companyEmail?: string;
   hasAccessToken: boolean;
   archivedCount: number;
 }
@@ -184,4 +186,50 @@ export interface NotificationSettings {
 export interface LowStockNotificationItem extends InventoryItem {
   severity: "critical" | "warning";
   deficit: number;
+}
+
+export interface DailyRevenueDataPoint {
+  date: string; // YYYY-MM-DD
+  label: string; // "Sep 23"
+  dayOfWeek: string; // "Wed"
+  revenue: number; // Daily customer sales revenue
+  subtotal: number;
+  tax: number;
+  receiptCount: number; // Number of sales receipts
+  itemsCount: number; // Units sold
+  avgReceiptValue: number;
+  expenses: number; // Supplier restock invoice spend from purchase receipts
+  netRevenue: number; // revenue - expenses
+  salesReceipts?: Array<{
+    id: string;
+    receipt_number: string;
+    customer_name: string;
+    motorcycle_model?: string;
+    total_amount: number;
+    payment_method: string;
+    created_at: string;
+  }>;
+}
+
+export interface DailyRevenueSummary {
+  periodDays: number;
+  totalRevenue: number;
+  totalReceipts: number;
+  totalUnitsSold: number;
+  avgDailyRevenue: number;
+  avgReceiptValue: number;
+  totalExpenses: number;
+  netProfit: number;
+  peakRevenueDay: {
+    date: string;
+    label: string;
+    revenue: number;
+    receiptCount: number;
+  } | null;
+  revenueGrowthPercent: number | null;
+}
+
+export interface DailyRevenueResponse {
+  summary: DailyRevenueSummary;
+  trend: DailyRevenueDataPoint[];
 }

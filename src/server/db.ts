@@ -442,11 +442,11 @@ export async function initDatabase() {
     });
   }
 
-  // Check and seed realistic 30-day sales history if fewer than 2 receipts exist
+  // Check and seed realistic 30-day sales history if fewer than 10 receipts exist
   const salesCountResult = await dbClient.execute("SELECT COUNT(*) as count FROM sales_receipts");
   const salesCount = Number(salesCountResult.rows[0]?.count ?? 0);
 
-  if (salesCount <= 1) {
+  if (salesCount <= 6) {
     // Additional sample sales across the last 30 days
     const extraSales = [
       {
@@ -464,11 +464,33 @@ export async function initDatabase() {
         staff_name: "Alex Rivera",
         staff_email: "alex.tech@motofixgarage.com",
         notes: "600RR Track prep: 4L Motul Synthetic, KN filter & front pads",
-        created_at: new Date(Date.now() - 4 * 86400000).toISOString(),
+        created_at: new Date(Date.now() - 1 * 86400000).toISOString(),
         items: [
           { inv_id: "part-1", name: "Motul 7100 4T 10W-40 Synthetic Oil (1L)", sku: "MOT-7100-10W40", qty: 4, price: 24.99, cat: "Oils & Fluids" },
           { inv_id: "part-6", name: "K&N Oil Filter KN-204-1 Black", sku: "FLT-KN-KN204", qty: 1, price: 19.99, cat: "Oils & Fluids" },
           { inv_id: "part-2", name: "Brembo Sintered Front Brake Pads 07BB", sku: "BRK-PAD-07BB", qty: 2, price: 58.0, cat: "Braking" },
+        ],
+      },
+      {
+        id: "sale-init-002b",
+        receipt_number: "SALE-2026-0037",
+        customer_name: "Rajesh Shrestha",
+        customer_phone: "(555) 312-9901",
+        motorcycle_model: "KTM Duke 390 (2023)",
+        subtotal: 114.98,
+        tax: 9.20,
+        total_amount: 124.18,
+        payment_method: "Cash",
+        staff_id: "staff-2",
+        staff_username: "sam.counter",
+        staff_name: "Sam Miller",
+        staff_email: "sam.counter@motofixgarage.com",
+        notes: "Duke 390 oil change and spark plug check",
+        created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
+        items: [
+          { inv_id: "part-1", name: "Motul 7100 4T 10W-40 Synthetic Oil (1L)", sku: "MOT-7100-10W40", qty: 2, price: 24.99, cat: "Oils & Fluids" },
+          { inv_id: "part-3", name: "NGK Laser Iridium Spark Plug CR9EIA-9", sku: "SPK-NGK-CR9E", qty: 2, price: 16.5, cat: "Electrical" },
+          { inv_id: "part-6", name: "K&N Oil Filter KN-204-1 Black", sku: "FLT-KN-KN204", qty: 1, price: 19.99, cat: "Oils & Fluids" },
         ],
       },
       {
@@ -486,11 +508,33 @@ export async function initDatabase() {
         staff_name: "Sam Miller",
         staff_email: "sam.counter@motofixgarage.com",
         notes: "Full service pack: spark plugs, brake pads, and oil",
-        created_at: new Date(Date.now() - 9 * 86400000).toISOString(),
+        created_at: new Date(Date.now() - 3 * 86400000).toISOString(),
         items: [
           { inv_id: "part-2", name: "Brembo Sintered Front Brake Pads 07BB", sku: "BRK-PAD-07BB", qty: 2, price: 58.0, cat: "Braking" },
           { inv_id: "part-1", name: "Motul 7100 4T 10W-40 Synthetic Oil (1L)", sku: "MOT-7100-10W40", qty: 4, price: 24.99, cat: "Oils & Fluids" },
           { inv_id: "part-3", name: "NGK Laser Iridium Spark Plug CR9EIA-9", sku: "SPK-NGK-CR9E", qty: 4, price: 16.5, cat: "Electrical" },
+        ],
+      },
+      {
+        id: "sale-init-003b",
+        receipt_number: "SALE-2026-0032",
+        customer_name: "Anita Thapa",
+        customer_phone: "(555) 441-2099",
+        motorcycle_model: "Royal Enfield Classic 350",
+        subtotal: 168.0,
+        tax: 13.44,
+        total_amount: 181.44,
+        payment_method: "Card",
+        staff_id: "staff-1",
+        staff_username: "alex.tech",
+        staff_name: "Alex Rivera",
+        staff_email: "alex.tech@motofixgarage.com",
+        notes: "Engine service & brake hardware upgrade",
+        created_at: new Date(Date.now() - 5 * 86400000).toISOString(),
+        items: [
+          { inv_id: "part-1", name: "Motul 7100 4T 10W-40 Synthetic Oil (1L)", sku: "MOT-7100-10W40", qty: 3, price: 24.99, cat: "Oils & Fluids" },
+          { inv_id: "part-2", name: "Brembo Sintered Front Brake Pads 07BB", sku: "BRK-PAD-07BB", qty: 1, price: 58.0, cat: "Braking" },
+          { inv_id: "part-7", name: "Stainless Steel M8x25 Brake Caliper Bolts (Pack of 4)", sku: "HRD-M8-TORX", qty: 2, price: 13.0, cat: "Hardware" },
         ],
       },
       {
@@ -508,10 +552,52 @@ export async function initDatabase() {
         staff_name: "Alex Rivera",
         staff_email: "alex.tech@motofixgarage.com",
         notes: "Front Michelin Road 6 tires replacement and caliper bolts",
-        created_at: new Date(Date.now() - 15 * 86400000).toISOString(),
+        created_at: new Date(Date.now() - 7 * 86400000).toISOString(),
         items: [
           { inv_id: "part-5", name: "Michelin Road 6 Front Tire 120/70 ZR17", sku: "TYR-MIC-ROAD6-F", qty: 2, price: 215.0, cat: "Tires" },
           { inv_id: "part-7", name: "Stainless Steel M8x25 Brake Caliper Bolts (Pack of 4)", sku: "HRD-M8-TORX", qty: 2, price: 13.0, cat: "Hardware" },
+        ],
+      },
+      {
+        id: "sale-init-004b",
+        receipt_number: "SALE-2026-0026",
+        customer_name: "Carlos Gomez",
+        customer_phone: "(555) 670-4491",
+        motorcycle_model: "BMW R1250GS",
+        subtotal: 215.0,
+        tax: 17.20,
+        total_amount: 232.20,
+        payment_method: "Card",
+        staff_id: "staff-2",
+        staff_username: "sam.counter",
+        staff_name: "Sam Miller",
+        staff_email: "sam.counter@motofixgarage.com",
+        notes: "Front tire replacement",
+        created_at: new Date(Date.now() - 10 * 86400000).toISOString(),
+        items: [
+          { inv_id: "part-5", name: "Michelin Road 6 Front Tire 120/70 ZR17", sku: "TYR-MIC-ROAD6-F", qty: 1, price: 215.0, cat: "Tires" },
+        ],
+      },
+      {
+        id: "sale-init-004c",
+        receipt_number: "SALE-2026-0024",
+        customer_name: "Liam Neeson",
+        customer_phone: "(555) 882-1902",
+        motorcycle_model: "Harley Sportster S",
+        subtotal: 182.97,
+        tax: 14.64,
+        total_amount: 197.61,
+        payment_method: "Cash",
+        staff_id: "staff-1",
+        staff_username: "alex.tech",
+        staff_name: "Alex Rivera",
+        staff_email: "alex.tech@motofixgarage.com",
+        notes: "Fluids and filter change",
+        created_at: new Date(Date.now() - 14 * 86400000).toISOString(),
+        items: [
+          { inv_id: "part-1", name: "Motul 7100 4T 10W-40 Synthetic Oil (1L)", sku: "MOT-7100-10W40", qty: 4, price: 24.99, cat: "Oils & Fluids" },
+          { inv_id: "part-6", name: "K&N Oil Filter KN-204-1 Black", sku: "FLT-KN-KN204", qty: 1, price: 19.99, cat: "Oils & Fluids" },
+          { inv_id: "part-3", name: "NGK Laser Iridium Spark Plug CR9EIA-9", sku: "SPK-NGK-CR9E", qty: 4, price: 16.5, cat: "Electrical" },
         ],
       },
       {
@@ -529,7 +615,7 @@ export async function initDatabase() {
         staff_name: "Sam Miller",
         staff_email: "sam.counter@motofixgarage.com",
         notes: "Drive chain replacement & engine tune up",
-        created_at: new Date(Date.now() - 22 * 86400000).toISOString(),
+        created_at: new Date(Date.now() - 19 * 86400000).toISOString(),
         items: [
           { inv_id: "part-4", name: "D.I.D 525VX3 X-Ring Drive Chain 120L", sku: "CHN-DID-525VX3", qty: 1, price: 125.0, cat: "Drivetrain" },
           { inv_id: "part-1", name: "Motul 7100 4T 10W-40 Synthetic Oil (1L)", sku: "MOT-7100-10W40", qty: 4, price: 24.99, cat: "Oils & Fluids" },
@@ -551,7 +637,7 @@ export async function initDatabase() {
         staff_name: "Alex Rivera",
         staff_email: "alex.tech@motofixgarage.com",
         notes: "Routine maintenance and fresh filters",
-        created_at: new Date(Date.now() - 28 * 86400000).toISOString(),
+        created_at: new Date(Date.now() - 25 * 86400000).toISOString(),
         items: [
           { inv_id: "part-6", name: "K&N Oil Filter KN-204-1 Black", sku: "FLT-KN-KN204", qty: 2, price: 19.99, cat: "Oils & Fluids" },
           { inv_id: "part-2", name: "Brembo Sintered Front Brake Pads 07BB", sku: "BRK-PAD-07BB", qty: 1, price: 58.0, cat: "Braking" },

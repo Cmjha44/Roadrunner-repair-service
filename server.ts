@@ -4,7 +4,11 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { initDatabase, dbClient } from "./src/server/db.ts";
 import { parseReceiptWithOpenSourceOcr } from "./src/server/openSourceOcrParser.ts";
-import { archiveReceiptFile } from "./src/server/driveService.ts";
+import {
+  archiveReceiptFile,
+  uploadJsonFileToDrive,
+  getOrCreateWorkshopDriveFolder,
+} from "./src/server/driveService.ts";
 import crypto from "crypto";
 
 const PORT = 3000;
@@ -30,7 +34,7 @@ async function startServer() {
   app.get("/api/health", (req, res) => {
     res.json({
       status: "ok",
-      app: "MotoFix Garage",
+      app: "Road Runner Moto Repair Shop",
       time: new Date().toISOString(),
       database: "SQLite (Local-first)",
     });
@@ -133,18 +137,24 @@ async function startServer() {
 
       if (raw_image_data) {
         // Read app drive settings if stored
-        const settingRow = await dbClient.execute({
-          sql: "SELECT value FROM app_settings WHERE key = 'google_drive_folder_id'",
+        const settingRows = await dbClient.execute({
+          sql: "SELECT key, value FROM app_settings WHERE key IN ('google_drive_folder_id', 'google_drive_access_token')",
           args: [],
         });
-        const folderId = (settingRow.rows[0]?.value as string) || process.env.GOOGLE_DRIVE_FOLDER_ID;
+        const settingsMap: Record<string, string> = {};
+        for (const row of settingRows.rows) {
+          settingsMap[row.key as string] = row.value as string;
+        }
+
+        const folderId = settingsMap["google_drive_folder_id"] || process.env.GOOGLE_DRIVE_FOLDER_ID;
+        const accessToken = settingsMap["google_drive_access_token"] || process.env.GOOGLE_DRIVE_ACCESS_TOKEN;
 
         driveResult = await archiveReceiptFile({
           filename: original_filename || `Receipt_${vendor_name.replace(/\s+/g, "_")}`,
           mimeType: mime_type || "image/jpeg",
           base64Data: raw_image_data,
           folderId,
-          accessToken: process.env.GOOGLE_DRIVE_ACCESS_TOKEN,
+          accessToken,
         });
       }
 
@@ -315,9 +325,9 @@ async function startServer() {
       const args: any[] = [];
 
       if (search && typeof search === "string" && search.trim()) {
-        query += " AND (name LIKE ? OR sku LIKE ? OR location_bin LIKE ?)";
+        query += " AND (name LIKE ? OR sku LIKE ? OR category LIKE ? OR location_bin LIKE ?)";
         const term = `%${search.trim()}%`;
-        args.push(term, term, term);
+        args.push(term, term, term, term);
       }
 
       if (category && typeof category === "string" && category !== "ALL") {
@@ -654,6 +664,208 @@ async function startServer() {
     }
   });
 
+  // 7c. DAILY REVENUE TREND ANALYTICS (PULLING DATA FROM RECEIPT LEDGER)
+  app.get(["/api/analytics/daily-revenue", "/api/receipts/daily-revenue"], async (req, res) => {
+    try {
+      const days = Math.min(Math.max(Number(req.query.days) || 30, 3), 365);
+      const now = new Date();
+
+      // Generate array of date keys for the requested period
+      const dateKeys: string[] = [];
+      const dateMap: Record<
+        string,
+        {
+          date: string;
+          label: string;
+          dayOfWeek: string;
+          revenue: number;
+          subtotal: number;
+          tax: number;
+          receiptCount: number;
+          itemsCount: number;
+          avgReceiptValue: number;
+          expenses: number;
+          netRevenue: number;
+          salesReceipts: Array<{
+            id: string;
+            receipt_number: string;
+            customer_name: string;
+            motorcycle_model?: string;
+            total_amount: number;
+            payment_method: string;
+            created_at: string;
+          }>;
+        }
+      > = {};
+
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 86400000);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        const key = `${yyyy}-${mm}-${dd}`;
+        const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        const dayOfWeek = d.toLocaleDateString("en-US", { weekday: "short" });
+
+        dateKeys.push(key);
+        dateMap[key] = {
+          date: key,
+          label,
+          dayOfWeek,
+          revenue: 0,
+          subtotal: 0,
+          tax: 0,
+          receiptCount: 0,
+          itemsCount: 0,
+          avgReceiptValue: 0,
+          expenses: 0,
+          netRevenue: 0,
+          salesReceipts: [],
+        };
+      }
+
+      const earliestDate = dateKeys[0] + "T00:00:00.000Z";
+      const priorStartDate = new Date(now.getTime() - days * 2 * 86400000).toISOString();
+
+      // Query sales receipts in the period and previous period for growth comparison
+      const salesQuery = await dbClient.execute({
+        sql: `SELECT id, receipt_number, customer_name, motorcycle_model, subtotal, tax, total_amount, payment_method, created_at 
+              FROM sales_receipts 
+              WHERE created_at >= ?
+              ORDER BY created_at ASC`,
+        args: [priorStartDate],
+      });
+
+      // Query sale items to calculate daily item volumes
+      const saleItemsQuery = await dbClient.execute({
+        sql: `SELECT sri.sale_id, sri.quantity, sr.created_at
+              FROM sale_receipt_items sri
+              JOIN sales_receipts sr ON sri.sale_id = sr.id
+              WHERE sr.created_at >= ?`,
+        args: [earliestDate],
+      });
+
+      // Map sale item units to sale_id
+      const saleUnitsMap: Record<string, number> = {};
+      for (const row of saleItemsQuery.rows) {
+        const saleId = String(row.sale_id);
+        saleUnitsMap[saleId] = (saleUnitsMap[saleId] || 0) + (Number(row.quantity) || 1);
+      }
+
+      let currentPeriodRevenue = 0;
+      let previousPeriodRevenue = 0;
+      const midPointTime = now.getTime() - days * 86400000;
+
+      for (const row of salesQuery.rows) {
+        const createdAt = String(row.created_at || "");
+        const rowTime = new Date(createdAt).getTime();
+        const amt = Number(row.total_amount) || 0;
+        const sub = Number(row.subtotal) || 0;
+        const tx = Number(row.tax) || 0;
+
+        if (rowTime >= midPointTime) {
+          currentPeriodRevenue += amt;
+          const key = createdAt.split("T")[0] || createdAt.substring(0, 10);
+          if (dateMap[key]) {
+            dateMap[key].revenue = Number((dateMap[key].revenue + amt).toFixed(2));
+            dateMap[key].subtotal = Number((dateMap[key].subtotal + sub).toFixed(2));
+            dateMap[key].tax = Number((dateMap[key].tax + tx).toFixed(2));
+            dateMap[key].receiptCount += 1;
+            dateMap[key].itemsCount += saleUnitsMap[String(row.id)] || 1;
+            dateMap[key].salesReceipts.push({
+              id: String(row.id),
+              receipt_number: String(row.receipt_number || "SALE"),
+              customer_name: String(row.customer_name || "Customer"),
+              motorcycle_model: row.motorcycle_model ? String(row.motorcycle_model) : undefined,
+              total_amount: amt,
+              payment_method: String(row.payment_method || "Card"),
+              created_at: createdAt,
+            });
+          }
+        } else {
+          previousPeriodRevenue += amt;
+        }
+      }
+
+      // Query purchase/expense receipts from supplier invoices
+      const expensesQuery = await dbClient.execute({
+        sql: `SELECT transaction_date, total_amount, created_at FROM receipts WHERE transaction_date >= ? OR created_at >= ?`,
+        args: [dateKeys[0], earliestDate],
+      });
+
+      for (const row of expensesQuery.rows) {
+        const txDate = String(row.transaction_date || row.created_at || "").split("T")[0];
+        const amt = Number(row.total_amount) || 0;
+        if (dateMap[txDate]) {
+          dateMap[txDate].expenses = Number((dateMap[txDate].expenses + amt).toFixed(2));
+        }
+      }
+
+      // Finalize trend array and compute averages
+      let totalUnitsSold = 0;
+      let totalReceipts = 0;
+      let totalExpenses = 0;
+      let peakRevenue = 0;
+      let peakDay: { date: string; label: string; revenue: number; receiptCount: number } | null = null;
+
+      const trend = dateKeys.map((key) => {
+        const item = dateMap[key];
+        item.avgReceiptValue = item.receiptCount > 0 ? Number((item.revenue / item.receiptCount).toFixed(2)) : 0;
+        item.netRevenue = Number((item.revenue - item.expenses).toFixed(2));
+        totalUnitsSold += item.itemsCount;
+        totalReceipts += item.receiptCount;
+        totalExpenses += item.expenses;
+
+        if (item.revenue > peakRevenue) {
+          peakRevenue = item.revenue;
+          peakDay = {
+            date: item.date,
+            label: item.label,
+            revenue: item.revenue,
+            receiptCount: item.receiptCount,
+          };
+        }
+
+        return item;
+      });
+
+      const avgDailyRevenue = Number((currentPeriodRevenue / days).toFixed(2));
+      const avgReceiptValue = totalReceipts > 0 ? Number((currentPeriodRevenue / totalReceipts).toFixed(2)) : 0;
+      const netProfit = Number((currentPeriodRevenue - totalExpenses).toFixed(2));
+
+      // Calculate growth percent
+      let revenueGrowthPercent: number | null = null;
+      if (previousPeriodRevenue > 0) {
+        revenueGrowthPercent = Number(
+          (((currentPeriodRevenue - previousPeriodRevenue) / previousPeriodRevenue) * 100).toFixed(1)
+        );
+      } else if (currentPeriodRevenue > 0) {
+        revenueGrowthPercent = 100.0;
+      }
+
+      const summary = {
+        periodDays: days,
+        totalRevenue: Number(currentPeriodRevenue.toFixed(2)),
+        totalReceipts,
+        totalUnitsSold,
+        avgDailyRevenue,
+        avgReceiptValue,
+        totalExpenses: Number(totalExpenses.toFixed(2)),
+        netProfit,
+        peakRevenueDay: peakDay,
+        revenueGrowthPercent,
+      };
+
+      res.json({
+        summary,
+        trend,
+      });
+    } catch (err: any) {
+      console.error("Daily revenue trend query error:", err);
+      res.status(500).json({ error: err?.message || "Failed to load daily revenue trend." });
+    }
+  });
+
   // 8. RECEIPT HISTORY / EXPENSE LEDGER (Sorting & Filtering)
   app.get("/api/receipts", async (req, res) => {
     try {
@@ -750,19 +962,31 @@ async function startServer() {
   // 11. GOOGLE DRIVE BACKUP SETTINGS & SYNC STATUS
   app.get("/api/drive/status", async (req, res) => {
     try {
-      const folderSetting = await dbClient.execute({
-        sql: "SELECT value FROM app_settings WHERE key = 'google_drive_folder_id'",
+      const settingsRows = await dbClient.execute({
+        sql: "SELECT key, value FROM app_settings WHERE key IN ('google_drive_folder_id', 'google_drive_folder_name', 'google_drive_company_email', 'google_drive_access_token')",
         args: [],
       });
+
+      const settingsMap: Record<string, string> = {};
+      for (const row of settingsRows.rows) {
+        settingsMap[row.key as string] = row.value as string;
+      }
 
       const totalArchived = await dbClient.execute(
         "SELECT COUNT(*) as count FROM receipts WHERE google_drive_file_id IS NOT NULL"
       );
 
+      const folderId = settingsMap["google_drive_folder_id"] || process.env.GOOGLE_DRIVE_FOLDER_ID || "root";
+      const folderName = settingsMap["google_drive_folder_name"] || "";
+      const companyEmail = settingsMap["google_drive_company_email"] || "";
+      const hasToken = Boolean(settingsMap["google_drive_access_token"] || process.env.GOOGLE_DRIVE_ACCESS_TOKEN);
+
       res.json({
-        configured: Boolean(process.env.GOOGLE_DRIVE_ACCESS_TOKEN || folderSetting.rows[0]?.value),
-        folderId: (folderSetting.rows[0]?.value as string) || process.env.GOOGLE_DRIVE_FOLDER_ID || "root",
-        hasAccessToken: Boolean(process.env.GOOGLE_DRIVE_ACCESS_TOKEN),
+        configured: Boolean(folderId && folderId !== "root") || hasToken || Boolean(companyEmail),
+        folderId,
+        folderName,
+        companyEmail,
+        hasAccessToken: hasToken,
         archivedCount: Number(totalArchived.rows[0]?.count || 0),
       });
     } catch (err: any) {
@@ -772,16 +996,196 @@ async function startServer() {
 
   app.post("/api/drive/config", async (req, res) => {
     try {
-      const { folderId } = req.body;
-      if (folderId) {
+      const { folderInput, folderName, companyEmail, accessToken } = req.body;
+
+      // Extract folder ID if user pasted full Drive URL (e.g. drive.google.com/drive/folders/1aBcD... or drive/u/1/folders/1aBcD...)
+      let cleanFolderId = (folderInput || "").trim();
+      if (cleanFolderId.includes("drive.google.com")) {
+        const urlMatch = cleanFolderId.match(/folders\/([a-zA-Z0-9_-]+)/);
+        if (urlMatch && urlMatch[1]) {
+          cleanFolderId = urlMatch[1];
+        }
+      }
+
+      if (cleanFolderId) {
         await dbClient.execute({
           sql: "INSERT INTO app_settings (key, value) VALUES ('google_drive_folder_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-          args: [folderId.trim()],
+          args: [cleanFolderId],
         });
       }
-      res.json({ success: true, folderId });
+
+      if (folderName !== undefined) {
+        await dbClient.execute({
+          sql: "INSERT INTO app_settings (key, value) VALUES ('google_drive_folder_name', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          args: [folderName.trim()],
+        });
+      }
+
+      if (companyEmail !== undefined) {
+        await dbClient.execute({
+          sql: "INSERT INTO app_settings (key, value) VALUES ('google_drive_company_email', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          args: [companyEmail.trim().toLowerCase()],
+        });
+      }
+
+      if (accessToken !== undefined && accessToken.trim()) {
+        await dbClient.execute({
+          sql: "INSERT INTO app_settings (key, value) VALUES ('google_drive_access_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          args: [accessToken.trim()],
+        });
+      }
+
+      res.json({
+        success: true,
+        folderId: cleanFolderId,
+        folderName,
+        companyEmail,
+      });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to update Drive config." });
+    }
+  });
+
+  // 11b. ACTIVE GOOGLE AUTH SESSION & WORKSHOP AUTO-SYNC TO DRIVE
+  app.post("/api/auth/google/session", async (req, res) => {
+    try {
+      const { accessToken, email, displayName, photoURL } = req.body;
+      if (!accessToken || !email) {
+        return res.status(400).json({ error: "Missing accessToken or email" });
+      }
+
+      // Store in SQLite app_settings
+      await dbClient.execute({
+        sql: "INSERT INTO app_settings (key, value) VALUES ('google_drive_access_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        args: [accessToken],
+      });
+      await dbClient.execute({
+        sql: "INSERT INTO app_settings (key, value) VALUES ('google_user_email', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        args: [email.toLowerCase()],
+      });
+      if (displayName) {
+        await dbClient.execute({
+          sql: "INSERT INTO app_settings (key, value) VALUES ('google_user_name', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          args: [displayName],
+        });
+      }
+
+      // Automatically find or create a dedicated workshop folder for this user's Google Drive
+      const workshopFolderId = await getOrCreateWorkshopDriveFolder(
+        accessToken,
+        "Road Runner Moto Repair Shop Archive"
+      );
+
+      await dbClient.execute({
+        sql: "INSERT INTO app_settings (key, value) VALUES ('google_drive_folder_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        args: [workshopFolderId],
+      });
+      await dbClient.execute({
+        sql: "INSERT INTO app_settings (key, value) VALUES ('google_drive_folder_name', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        args: ["Road Runner Moto Repair Shop Archive"],
+      });
+
+      // Synchronize full workshop inventory snapshot immediately into user's Google Drive
+      const inventory = await dbClient.execute("SELECT * FROM inventory");
+      const receipts = await dbClient.execute("SELECT id, vendor_name, transaction_date, receipt_number, total_amount, item_count, google_drive_file_id, google_drive_web_link, created_at FROM receipts");
+      const sales = await dbClient.execute("SELECT * FROM sales_receipts ORDER BY created_at DESC LIMIT 100");
+
+      const snapshot = {
+        app: "Road Runner Moto Repair Shop",
+        synced_at: new Date().toISOString(),
+        signed_in_user: email,
+        inventory_items_count: inventory.rows.length,
+        inventory: inventory.rows,
+        receipts: receipts.rows,
+        sales: sales.rows,
+      };
+
+      const driveUpload = await uploadJsonFileToDrive({
+        filename: `Workshop_Inventory_Snapshot_${new Date().toISOString().split("T")[0]}.json`,
+        jsonData: snapshot,
+        folderId: workshopFolderId,
+        accessToken,
+      });
+
+      res.json({
+        success: true,
+        email,
+        workshopFolderId,
+        driveSyncWebLink: driveUpload?.webLink || null,
+        message: "Google Drive connected and workshop data synced.",
+      });
+    } catch (err: any) {
+      console.error("Failed to store google session:", err);
+      res.status(500).json({ error: err?.message || "Failed to process session." });
+    }
+  });
+
+  app.delete("/api/auth/google/session", async (req, res) => {
+    try {
+      await dbClient.execute("DELETE FROM app_settings WHERE key IN ('google_drive_access_token', 'google_user_email', 'google_user_name')");
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to clear session." });
+    }
+  });
+
+  // 11c. SYNC ALL WORKSHOP DATA TO DRIVE ON DEMAND
+  app.post("/api/drive/sync-now", async (req, res) => {
+    try {
+      const settingRows = await dbClient.execute({
+        sql: "SELECT key, value FROM app_settings WHERE key IN ('google_drive_folder_id', 'google_drive_access_token', 'google_user_email')",
+        args: [],
+      });
+      const settingsMap: Record<string, string> = {};
+      for (const row of settingRows.rows) {
+        settingsMap[row.key as string] = row.value as string;
+      }
+
+      const accessToken = settingsMap["google_drive_access_token"] || process.env.GOOGLE_DRIVE_ACCESS_TOKEN;
+      const folderId = settingsMap["google_drive_folder_id"] || "root";
+      const userEmail = settingsMap["google_user_email"] || "workshop";
+
+      if (!accessToken) {
+        return res.status(401).json({ error: "No active Google Drive access token. Please sign in with your Gmail account." });
+      }
+
+      const inventory = await dbClient.execute("SELECT * FROM inventory");
+      const receipts = await dbClient.execute("SELECT * FROM receipts ORDER BY created_at DESC");
+      const receiptItems = await dbClient.execute("SELECT * FROM receipt_items");
+      const sales = await dbClient.execute("SELECT * FROM sales_receipts ORDER BY created_at DESC");
+      const saleItems = await dbClient.execute("SELECT * FROM sale_receipt_items");
+      const movements = await dbClient.execute("SELECT * FROM stock_movements ORDER BY created_at DESC");
+
+      const fullArchive = {
+        app: "Road Runner Moto Repair Shop",
+        exportedAt: new Date().toISOString(),
+        operatorEmail: userEmail,
+        inventory: inventory.rows,
+        receipts: receipts.rows,
+        receiptItems: receiptItems.rows,
+        sales: sales.rows,
+        saleItems: saleItems.rows,
+        stockMovements: movements.rows,
+      };
+
+      const dateTag = new Date().toISOString().replace(/[:.]/g, "-");
+      const uploadRes = await uploadJsonFileToDrive({
+        filename: `Road_Runner_Workshop_Full_Backup_${dateTag}.json`,
+        jsonData: fullArchive,
+        folderId,
+        accessToken,
+      });
+
+      res.json({
+        success: true,
+        fileId: uploadRes?.fileId || null,
+        webLink: uploadRes?.webLink || null,
+        folderId,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error("Drive sync now failed:", err);
+      res.status(500).json({ error: err?.message || "Failed to sync to Google Drive." });
     }
   });
 
@@ -792,9 +1196,9 @@ async function startServer() {
       const receipts = await dbClient.execute("SELECT id, vendor_name, transaction_date, receipt_number, subtotal, tax, total_amount, item_count, google_drive_file_id, google_drive_web_link, notes, created_at FROM receipts");
       const movements = await dbClient.execute("SELECT * FROM stock_movements ORDER BY created_at DESC LIMIT 500");
 
-      res.setHeader("Content-Disposition", `attachment; filename="motofix_backup_${new Date().toISOString().split("T")[0]}.json"`);
+      res.setHeader("Content-Disposition", `attachment; filename="road_runner_moto_backup_${new Date().toISOString().split("T")[0]}.json"`);
       res.json({
-        app: "MotoFix Garage",
+        app: "Road Runner Moto Repair Shop",
         exportDate: new Date().toISOString(),
         database: "SQLite",
         inventory: inventory.rows,
@@ -922,9 +1326,9 @@ async function startServer() {
       const args: any[] = [];
 
       if (search && typeof search === "string" && search.trim()) {
-        query += " AND (name LIKE ? OR sku LIKE ? OR location_bin LIKE ?)";
+        query += " AND (name LIKE ? OR sku LIKE ? OR category LIKE ? OR location_bin LIKE ?)";
         const term = `%${search.trim()}%`;
-        args.push(term, term, term);
+        args.push(term, term, term, term);
       }
 
       if (category && typeof category === "string" && category !== "ALL") {
@@ -1083,26 +1487,54 @@ async function startServer() {
         });
       }
 
+      const saleReceiptData = {
+        id: saleId,
+        receipt_number: receiptNumber,
+        customer_name,
+        customer_phone,
+        motorcycle_model,
+        subtotal,
+        tax,
+        total_amount: totalAmount,
+        payment_method,
+        staff_id,
+        staff_username,
+        staff_name,
+        staff_email,
+        notes,
+        created_at: now,
+        items: recordedItems,
+      };
+
+      // Asynchronously backup sale receipt to Google Drive if active token exists
+      (async () => {
+        try {
+          const settingRows = await dbClient.execute({
+            sql: "SELECT key, value FROM app_settings WHERE key IN ('google_drive_folder_id', 'google_drive_access_token')",
+            args: [],
+          });
+          const settingsMap: Record<string, string> = {};
+          for (const row of settingRows.rows) {
+            settingsMap[row.key as string] = row.value as string;
+          }
+          const accessToken = settingsMap["google_drive_access_token"] || process.env.GOOGLE_DRIVE_ACCESS_TOKEN;
+          const folderId = settingsMap["google_drive_folder_id"] || "root";
+          if (accessToken) {
+            await uploadJsonFileToDrive({
+              filename: `Sale_${receiptNumber}_${customer_name.replace(/\s+/g, "_")}.json`,
+              jsonData: saleReceiptData,
+              folderId,
+              accessToken,
+            });
+          }
+        } catch (e) {
+          console.warn("Background Drive upload for sale receipt encountered error:", e);
+        }
+      })();
+
       res.json({
         success: true,
-        receipt: {
-          id: saleId,
-          receipt_number: receiptNumber,
-          customer_name,
-          customer_phone,
-          motorcycle_model,
-          subtotal,
-          tax,
-          total_amount: totalAmount,
-          payment_method,
-          staff_id,
-          staff_username,
-          staff_name,
-          staff_email,
-          notes,
-          created_at: now,
-          items: recordedItems,
-        },
+        receipt: saleReceiptData,
         message: `Sale receipt #${receiptNumber} successfully logged and inventory updated!`,
       });
     } catch (err: any) {
@@ -1401,10 +1833,10 @@ async function startServer() {
       const lowParts = parts.filter((p) => Number(p.stock_quantity) > 0);
 
       // Compose Email Subject and Body
-      const subject = `[MotoFix Garage Alert] ⚠️ Low-Stock Warning: ${parts.length} spare parts below threshold (${dateFormatted})`;
+      const subject = `[Road Runner Moto Repair Shop] ⚠️ Low-Stock Alert: ${parts.length} parts below threshold (${dateFormatted})`;
 
       const bodyText = `
-MOTOFIX MOTORBIKE REPAIR SHOP - LOW STOCK ALERT
+ROAD RUNNER MOTO REPAIR SHOP - LOW STOCK ALERT
 Date: ${dateFormatted}
 Recipient: ${targetEmail}
 Status: ${criticalParts.length} OUT OF STOCK, ${lowParts.length} LOW STOCK
@@ -1421,10 +1853,10 @@ ${lowParts.length > 0 ? "LOW STOCK WARNING (AT OR BELOW THRESHOLD):\n" + lowPart
 ============================================================
 NEXT STEPS:
 1. Contact parts distributors (Motul, Brembo, NGK, Michelin).
-2. Scan & upload purchase invoices to MotoFix Garage OS when parts arrive.
-3. Inventory counts will automatically increment upon receipt approval.
+2. Scan & upload purchase invoices to Road Runner Moto Repair Shop OS when parts arrive.
+3. Inventory counts will automatically increment and sync with Google Drive.
 
-MotoFix Garage OS Notification System
+Road Runner Moto Repair Shop OS Notification System
 Automated local-first alert from SQLite Database
 `.trim();
 

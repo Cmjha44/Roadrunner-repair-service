@@ -179,11 +179,11 @@ export function parseReceiptText(rawText: string): ParsedReceiptResult {
       !lower.includes("tax")
     ) {
       let moneyMatch =
-        line.match(/(?:total|due)[:\s]*\$?\s*([0-9,]+\.\d{2})/i) ||
-        line.match(/\$?\s*([0-9,]+\.\d{2})/);
+        line.match(/(?:total|due)[:\s]*(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})/i) ||
+        line.match(/(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})/i);
 
-      if (!moneyMatch && /^\$?[0-9,]+\.\d{2}$/.test(nextLine.trim())) {
-        moneyMatch = nextLine.match(/\$?\s*([0-9,]+\.\d{2})/);
+      if (!moneyMatch && /^(?:NPR|rs\.?|\$)?\s*[0-9,]+\.\d{2}$/i.test(nextLine.trim())) {
+        moneyMatch = nextLine.match(/(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})/i);
       }
 
       if (moneyMatch) {
@@ -197,11 +197,11 @@ export function parseReceiptText(rawText: string): ParsedReceiptResult {
     // Subtotal detection
     if (lower.includes("subtotal") || lower.includes("sub-total") || lower.includes("net amount")) {
       let moneyMatch =
-        line.match(/(?:subtotal|sub-total|net)[:\s]*\$?\s*([0-9,]+\.\d{2})/i) ||
-        line.match(/\$?\s*([0-9,]+\.\d{2})/);
+        line.match(/(?:subtotal|sub-total|net)[:\s]*(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})/i) ||
+        line.match(/(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})/i);
 
-      if (!moneyMatch && /^\$?[0-9,]+\.\d{2}$/.test(nextLine.trim())) {
-        moneyMatch = nextLine.match(/\$?\s*([0-9,]+\.\d{2})/);
+      if (!moneyMatch && /^(?:NPR|rs\.?|\$)?\s*[0-9,]+\.\d{2}$/i.test(nextLine.trim())) {
+        moneyMatch = nextLine.match(/(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})/i);
       }
 
       if (moneyMatch) {
@@ -215,11 +215,11 @@ export function parseReceiptText(rawText: string): ParsedReceiptResult {
     // Tax detection
     if (lower.includes("tax") || lower.includes("gst") || lower.includes("vat")) {
       let moneyMatch =
-        line.match(/(?:tax|gst|vat)[^$0-9]*\$?\s*([0-9,]+\.\d{2})/i) ||
-        line.match(/\$?\s*([0-9,]+\.\d{2})/);
+        line.match(/(?:tax|gst|vat)[^0-9]*(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})/i) ||
+        line.match(/(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})/i);
 
-      if (!moneyMatch && /^\$?[0-9,]+\.\d{2}$/.test(nextLine.trim())) {
-        moneyMatch = nextLine.match(/\$?\s*([0-9,]+\.\d{2})/);
+      if (!moneyMatch && /^(?:NPR|rs\.?|\$)?\s*[0-9,]+\.\d{2}$/i.test(nextLine.trim())) {
+        moneyMatch = nextLine.match(/(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})/i);
       }
 
       if (moneyMatch) {
@@ -244,16 +244,16 @@ export function parseReceiptText(rawText: string): ParsedReceiptResult {
       i + 4 < lines.length &&
       lines[i + 1].toLowerCase().includes("sku:") &&
       /^\d+$/.test(lines[i + 2].trim()) &&
-      /^\$?\d+\.\d{2}$/.test(lines[i + 3].trim()) &&
-      /^\$?\d+\.\d{2}$/.test(lines[i + 4].trim())
+      /^(?:NPR|rs\.?|\$)?\s*\d+\.\d{2}$/i.test(lines[i + 3].trim()) &&
+      /^(?:NPR|rs\.?|\$)?\s*\d+\.\d{2}$/i.test(lines[i + 4].trim())
     ) {
       const partName = line;
       const skuLine = lines[i + 1];
       const skuMatch = skuLine.match(/sku:\s*([A-Z0-9-_/]+)/i);
       const sku = skuMatch ? skuMatch[1] : "";
       const qty = parseInt(lines[i + 2].trim(), 10) || 1;
-      const unitPrice = parseFloat(lines[i + 3].replace(/[$,]/g, "")) || 0;
-      const totalPrice = parseFloat(lines[i + 4].replace(/[$,]/g, "")) || unitPrice * qty;
+      const unitPrice = parseFloat(lines[i + 3].replace(/(?:NPR|rs\.?|[$,\s])/gi, "")) || 0;
+      const totalPrice = parseFloat(lines[i + 4].replace(/(?:NPR|rs\.?|[$,\s])/gi, "")) || unitPrice * qty;
       const category = categorizePart(partName + " " + skuLine);
 
       items.push({
@@ -287,8 +287,8 @@ export function parseReceiptText(rawText: string): ParsedReceiptResult {
       continue;
     }
 
-    // Single-line item pattern: e.g. "Brembo Sintered Brake Pads 07BB  1  $42.00  $42.00"
-    const moneyMatches = [...line.matchAll(/\$?\s*([0-9,]+\.\d{2})\b/g)];
+    // Single-line item pattern: e.g. "Brembo Sintered Brake Pads 07BB  1  $42.00  $42.00" or NPR 42.00
+    const moneyMatches = [...line.matchAll(/(?:NPR|rs\.?|\$)?\s*([0-9,]+\.\d{2})\b/gi)];
     if (moneyMatches.length >= 1) {
       const prices = moneyMatches.map((m) => parseFloat(m[1].replace(/,/g, "")));
       const totalPrice = prices[prices.length - 1];

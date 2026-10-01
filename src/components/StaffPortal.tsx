@@ -140,11 +140,11 @@ export function StaffPortal({ onExitStaffPortal }: StaffPortalProps) {
               </span>
               <span className="text-slate-500 text-xs font-mono">• Restricted Access</span>
             </div>
-            <h1 className="text-2xl font-black tracking-tight text-white font-mono">
-              MOTOFIX GARAGE TERMINAL
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white font-mono uppercase">
+              Road Runner Moto Repair Shop
             </h1>
             <p className="text-xs text-slate-400">
-              Welcome to the staff counter portal. Before starting, you must verify your identity with your official company email and staff passcode.
+              Welcome to the staff counter portal. Verify your identity with your official company email and staff passcode to log sales and check parts stock.
             </p>
           </div>
 
@@ -294,15 +294,15 @@ export function StaffPortal({ onExitStaffPortal }: StaffPortalProps) {
               </div>
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="text-base font-black tracking-tight text-white font-mono">
-                    MOTOFIX GARAGE
+                  <span className="text-base font-black tracking-tight text-white font-mono uppercase">
+                    ROAD RUNNER MOTO
                   </span>
                   <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
                     STAFF TERMINAL
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 font-mono">
-                  Restricted: Sales Receipts &amp; Inventory Availability
+                  Repair Shop Counter: Sales Receipts &amp; Inventory Availability
                 </p>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Search,
   SlidersHorizontal,
@@ -13,7 +13,7 @@ import {
   X,
   Package,
   History,
-  DollarSign,
+  Coins,
   Boxes,
   Layers,
   MapPin,
@@ -22,6 +22,9 @@ import {
   ChevronUp,
   Mail,
   Bell,
+  Tag,
+  Sparkles,
+  TrendingUp,
 } from "lucide-react";
 import {
   InventoryItem,
@@ -30,17 +33,21 @@ import {
   StockMovement,
 } from "../types.ts";
 import { TopSellingPartsChart } from "./TopSellingPartsChart.tsx";
+import { DailyRevenueTrendChart } from "./DailyRevenueTrendChart.tsx";
+import { formatNpr } from "../utils/currency.ts";
 
 interface InventoryDashboardProps {
   onSelectPartForHistory?: (item: InventoryItem) => void;
   onRefreshTrigger?: number;
   onOpenNotificationCenter?: () => void;
+  onViewReceiptsLedger?: () => void;
 }
 
 export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
   onSelectPartForHistory,
   onRefreshTrigger = 0,
   onOpenNotificationCenter,
+  onViewReceiptsLedger,
 }) => {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -48,6 +55,49 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [showAnalyticsChart, setShowAnalyticsChart] = useState(true);
+  const [analyticsView, setAnalyticsView] = useState<"revenue" | "parts" | "both">("revenue");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Global keyboard shortcut to focus search with '/' or 'Ctrl/Cmd+K'
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = document.activeElement?.tagName;
+      if (
+        (e.key === "/" && activeTag !== "INPUT" && activeTag !== "TEXTAREA") ||
+        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k")
+      ) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      } else if (e.key === "Escape" && document.activeElement === searchInputRef.current) {
+        setSearchTerm("");
+        searchInputRef.current?.blur();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Helper to highlight matching text in search results
+  const highlightMatch = (text: string, query: string) => {
+    if (!query.trim() || !text) return text;
+    const escaped = query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`(${escaped})`, "gi");
+    const parts = text.split(regex);
+    return parts.map((part, i) =>
+      part.toLowerCase() === query.trim().toLowerCase() ? (
+        <mark
+          key={i}
+          className="bg-amber-400/30 text-amber-200 px-0.5 rounded font-bold underline decoration-amber-400/60"
+        >
+          {part}
+        </mark>
+      ) : (
+        part
+      )
+    );
+  };
 
   // Sorting state
   const [sortBy, setSortBy] = useState<
@@ -320,14 +370,14 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
 
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm flex items-center space-x-3">
           <div className="p-2.5 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20">
-            <DollarSign className="w-5 h-5" />
+            <Coins className="w-5 h-5" />
           </div>
           <div>
             <p className="text-[11px] font-mono uppercase tracking-wider text-slate-400">
               Inventory Asset Value
             </p>
             <p className="text-xl font-black text-sky-400 font-mono">
-              ${totalValuation.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatNpr(totalValuation)}
             </p>
           </div>
         </div>
@@ -352,20 +402,66 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
         </div>
       )}
 
-      {/* Top-Selling Spare Parts Analytics Chart (Recharts) */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between px-1">
-          <div className="flex items-center space-x-2 text-xs font-mono text-slate-400">
-            <BarChart3 className="w-4 h-4 text-amber-400" />
-            <span className="font-bold text-slate-300 uppercase tracking-wider">
-              Parts Velocity &amp; Demand Visualizer
-            </span>
+      {/* Recharts Workshop Analytics Section (Daily Revenue Trend & Parts Demand) */}
+      <div className="space-y-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+          {/* Chart View Switcher Tabs */}
+          <div className="flex items-center space-x-1 p-1 bg-slate-900 border border-slate-800 rounded-lg text-xs font-mono">
+            <button
+              onClick={() => {
+                setAnalyticsView("revenue");
+                setShowAnalyticsChart(true);
+              }}
+              className={`px-3 py-1.5 rounded-md font-bold flex items-center space-x-1.5 transition-all ${
+                analyticsView === "revenue" && showAnalyticsChart
+                  ? "bg-amber-500 text-slate-950 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              <span>Daily Revenue Trend</span>
+              <span className="text-[10px] opacity-80 uppercase px-1 rounded bg-black/20 font-sans hidden md:inline">
+                Ledger
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setAnalyticsView("parts");
+                setShowAnalyticsChart(true);
+              }}
+              className={`px-3 py-1.5 rounded-md font-bold flex items-center space-x-1.5 transition-all ${
+                analyticsView === "parts" && showAnalyticsChart
+                  ? "bg-amber-500 text-slate-950 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Parts Velocity</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setAnalyticsView("both");
+                setShowAnalyticsChart(true);
+              }}
+              className={`px-2.5 py-1.5 rounded-md font-bold flex items-center space-x-1.5 transition-all ${
+                analyticsView === "both" && showAnalyticsChart
+                  ? "bg-amber-500 text-slate-950 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Combined</span>
+            </button>
           </div>
+
+          {/* Toggle Expand / Collapse */}
           <button
             onClick={() => setShowAnalyticsChart(!showAnalyticsChart)}
-            className="text-xs font-mono text-slate-400 hover:text-amber-400 flex items-center space-x-1 py-1 px-2 rounded hover:bg-slate-900 transition-colors"
+            className="text-xs font-mono text-slate-400 hover:text-amber-400 flex items-center space-x-1 py-1 px-2.5 rounded hover:bg-slate-900 border border-transparent hover:border-slate-800 transition-colors self-end sm:self-auto"
           >
-            <span>{showAnalyticsChart ? "Hide Chart" : "Show Top Movers Chart"}</span>
+            <span>{showAnalyticsChart ? "Hide Charts" : "Show Analytics"}</span>
             {showAnalyticsChart ? (
               <ChevronUp className="w-3.5 h-3.5" />
             ) : (
@@ -375,32 +471,65 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
         </div>
 
         {showAnalyticsChart && (
-          <TopSellingPartsChart onRefreshTrigger={onRefreshTrigger} />
+          <div className="space-y-4">
+            {(analyticsView === "revenue" || analyticsView === "both") && (
+              <DailyRevenueTrendChart
+                onRefreshTrigger={onRefreshTrigger}
+                onViewReceiptsLedger={onViewReceiptsLedger}
+              />
+            )}
+
+            {(analyticsView === "parts" || analyticsView === "both") && (
+              <TopSellingPartsChart onRefreshTrigger={onRefreshTrigger} />
+            )}
+          </div>
         )}
       </div>
 
       {/* Controls Bar: Search, Category Filter, Low Stock Toggle, Add Part Button */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm space-y-3">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm space-y-3.5">
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
-          {/* Instant Search Bar */}
+          {/* Quick Lookup Search Bar */}
           <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-            <input
-              id="inventory-search-input"
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by part name, SKU / part #, or bin location..."
-              className="w-full pl-9 pr-4 py-2 bg-slate-950 border border-slate-700 rounded-lg text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-400 font-medium"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm("")}
-                className="absolute right-3 top-2.5 text-slate-400 hover:text-white text-xs"
-              >
-                Clear
-              </button>
-            )}
+            <div className="relative flex items-center">
+              <Search
+                className={`w-4 h-4 absolute left-3.5 transition-colors ${
+                  searchTerm ? "text-amber-400" : "text-slate-400"
+                }`}
+              />
+              <input
+                ref={searchInputRef}
+                id="inventory-search-input"
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Quick lookup by SKU (e.g. MOT-7100, BRK-PAD), Name (Brembo, Plug), or Category (Braking, Tires)..."
+                className="w-full pl-10 pr-24 py-2.5 bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-lg text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-amber-400/50 font-medium transition-all"
+              />
+              <div className="absolute right-2.5 flex items-center space-x-1.5">
+                {searchTerm ? (
+                  <button
+                    onClick={() => {
+                      setSearchTerm("");
+                      searchInputRef.current?.focus();
+                    }}
+                    title="Clear search (Esc)"
+                    className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors flex items-center space-x-0.5 text-xs font-mono"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline text-[11px]">Clear</span>
+                  </button>
+                ) : (
+                  <kbd
+                    onClick={() => searchInputRef.current?.focus()}
+                    className="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-slate-900 border border-slate-700 rounded shadow-xs cursor-pointer hover:border-slate-600 hover:text-slate-300"
+                    title="Press / or ⌘K to search"
+                  >
+                    /
+                  </kbd>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
@@ -462,6 +591,69 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
               <Plus className="w-3.5 h-3.5" />
               <span>New Part</span>
             </button>
+          </div>
+        </div>
+
+        {/* Quick Search Chips & Search Status Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-mono text-slate-500 flex items-center mr-1">
+              <Tag className="w-3 h-3 mr-1" /> Quick lookup:
+            </span>
+            {[
+              { label: "Brembo", query: "Brembo" },
+              { label: "Motul", query: "Motul" },
+              { label: "NGK", query: "NGK" },
+              { label: "Michelin", query: "Michelin" },
+              { label: "Braking", query: "Braking" },
+              { label: "Oils & Fluids", query: "Oils & Fluids" },
+              { label: "Electrical", query: "Electrical" },
+              { label: "Tires", query: "Tires" },
+              { label: "Drivetrain", query: "Drivetrain" },
+            ].map((tag) => (
+              <button
+                key={tag.label}
+                type="button"
+                onClick={() => {
+                  setSearchTerm(tag.query);
+                  searchInputRef.current?.focus();
+                }}
+                className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors border ${
+                  searchTerm.toLowerCase() === tag.query.toLowerCase()
+                    ? "bg-amber-500 text-slate-950 border-amber-400 font-bold"
+                    : "bg-slate-950/70 text-slate-400 border-slate-800 hover:text-amber-300 hover:border-slate-700"
+                }`}
+              >
+                {tag.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Active Search / Filter Status Counter */}
+          <div className="flex items-center space-x-2 text-[11px] font-mono text-slate-400">
+            {searchTerm ? (
+              <span className="text-amber-300">
+                Found <strong>{items.length}</strong> part(s) matching "{searchTerm}"
+              </span>
+            ) : (
+              <span>
+                Showing <strong>{items.length}</strong> catalog parts
+              </span>
+            )}
+
+            {(searchTerm || selectedCategory !== "ALL" || lowStockOnly) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchTerm("");
+                  setSelectedCategory("ALL");
+                  setLowStockOnly(false);
+                }}
+                className="text-slate-500 hover:text-slate-300 underline text-[10px]"
+              >
+                Reset All
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -586,8 +778,38 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500">
-                    No parts match your search or filter criteria.
+                  <td colSpan={7} className="py-12 text-center text-slate-400">
+                    <div className="max-w-md mx-auto flex flex-col items-center justify-center space-y-3">
+                      <div className="w-12 h-12 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-slate-400">
+                        <Search className="w-6 h-6 text-amber-400/80" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="font-bold text-white text-sm font-mono">
+                          {searchTerm
+                            ? `No parts found matching "${searchTerm}"`
+                            : "No parts match your filter criteria"}
+                        </p>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          {searchTerm
+                            ? `Try checking for typos, or search by SKU (e.g. MOT-7100, BRK-PAD), generic name (Brembo, Plug), or category (Braking, Tires).`
+                            : `Try adjusting the category filter or turning off low-stock filtering.`}
+                        </p>
+                      </div>
+                      {(searchTerm || selectedCategory !== "ALL" || lowStockOnly) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSearchTerm("");
+                            setSelectedCategory("ALL");
+                            setLowStockOnly(false);
+                            searchInputRef.current?.focus();
+                          }}
+                          className="px-3.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-mono font-bold transition-colors"
+                        >
+                          Clear Search &amp; Show All Parts
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -604,9 +826,13 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
                     >
                       {/* Name & SKU */}
                       <td className="py-3 px-4">
-                        <div className="font-bold text-white text-sm">{item.name}</div>
+                        <div className="font-bold text-white text-sm">
+                          {highlightMatch(item.name, searchTerm)}
+                        </div>
                         <div className="flex items-center space-x-2 mt-0.5 font-mono text-[11px] text-slate-400">
-                          <span className="text-amber-400">{item.sku || "NO SKU"}</span>
+                          <span className="text-amber-400">
+                            {highlightMatch(item.sku || "NO SKU", searchTerm)}
+                          </span>
                           {item.location_bin && (
                             <span className="flex items-center text-slate-400">
                               <MapPin className="w-2.5 h-2.5 mr-0.5" />
@@ -619,7 +845,7 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
                       {/* Category */}
                       <td className="py-3 px-3">
                         <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                          {item.category}
+                          {highlightMatch(item.category, searchTerm)}
                         </span>
                       </td>
 
@@ -694,11 +920,11 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
                       {/* Unit Cost */}
                       <td className="py-3 px-3 text-right font-mono">
                         <span className="text-white font-medium">
-                          ${Number(item.last_purchased_cost).toFixed(2)}
+                          {formatNpr(item.last_purchased_cost)}
                         </span>
                         {item.selling_price > 0 && (
                           <span className="text-[10px] text-slate-400 block">
-                            Sell: ${Number(item.selling_price).toFixed(2)}
+                            Sell: {formatNpr(item.selling_price)}
                           </span>
                         )}
                       </td>
@@ -847,7 +1073,7 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-300 font-mono uppercase mb-1">
-                    Purchased Cost ($)
+                    Purchased Cost (NPR)
                   </label>
                   <input
                     type="number"
