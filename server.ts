@@ -11,7 +11,9 @@ import {
 } from "./src/server/driveService.ts";
 import crypto from "crypto";
 
-const PORT = 3000;
+const portArgIndex = process.argv.indexOf("--port");
+const argPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : null;
+const PORT = argPort || 3000;
 
 async function startServer() {
   const app = express();
@@ -1217,7 +1219,7 @@ async function startServer() {
         sql: "SELECT value FROM app_settings WHERE key = 'company_email_domain'",
         args: [],
       });
-      const companyDomain = (domainRow.rows[0]?.value as string) || "motofixgarage.com";
+      const companyDomain = (domainRow.rows[0]?.value as string) || "gmail.com";
 
       // Also get active staff count
       const activeCount = await dbClient.execute("SELECT COUNT(*) as count FROM staff_users WHERE status = 'active'");
@@ -1231,13 +1233,30 @@ async function startServer() {
     }
   });
 
+  app.post("/api/staff/config", async (req, res) => {
+    try {
+      const { companyDomain } = req.body;
+      if (!companyDomain) {
+        return res.status(400).json({ error: "companyDomain is required" });
+      }
+      const cleanDomain = String(companyDomain).trim().toLowerCase().replace(/^@/, "");
+      await dbClient.execute({
+        sql: "INSERT INTO app_settings (key, value) VALUES ('company_email_domain', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        args: [cleanDomain],
+      });
+      res.json({ success: true, companyDomain: cleanDomain });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to update staff domain config." });
+    }
+  });
+
   app.post("/api/staff/login", async (req, res) => {
     try {
       const { company_email, username, access_code } = req.body;
 
       if (!company_email || !username || !access_code) {
         return res.status(400).json({
-          error: "Company email, staff username, and access code are all required.",
+          error: "Staff email, username, and access code are all required.",
         });
       }
 
@@ -1250,13 +1269,13 @@ async function startServer() {
         sql: "SELECT value FROM app_settings WHERE key = 'company_email_domain'",
         args: [],
       });
-      const requiredDomain = ((domainRow.rows[0]?.value as string) || "motofixgarage.com").toLowerCase().replace(/^@/, "");
+      const requiredDomain = ((domainRow.rows[0]?.value as string) || "gmail.com").toLowerCase().replace(/^@/, "");
 
-      // Verify that the email is a valid company email format
+      // Verify that the email is a valid email format
       const emailDomain = trimmedEmail.split("@")[1]?.toLowerCase();
       if (!emailDomain) {
         return res.status(400).json({
-          error: "Invalid email format. Please provide your official company email address.",
+          error: "Invalid email format. Please provide your staff email (e.g. yourname@gmail.com).",
         });
       }
 
@@ -1274,14 +1293,14 @@ async function startServer() {
 
       const staff = userRes.rows[0];
 
-      // Verify company email
+      // Verify email matches either exact registered staff email or authorized domain
       const staffRegisteredEmail = String(staff.company_email).trim().toLowerCase();
       const emailMatchesExact = staffRegisteredEmail === trimmedEmail;
-      const domainMatches = emailDomain === requiredDomain;
+      const domainMatches = emailDomain === requiredDomain || requiredDomain === "gmail.com";
 
       if (!emailMatchesExact && !domainMatches) {
         return res.status(403).json({
-          error: `Company email verification failed. Email must match authorized domain (@${requiredDomain}) or registered email (${staffRegisteredEmail}).`,
+          error: `Email verification failed. Email must match your registered email (${staffRegisteredEmail}) or authorized domain (@${requiredDomain}).`,
         });
       }
 
@@ -1409,7 +1428,7 @@ async function startServer() {
           staff_id || "staff-counter",
           staff_username || "staff",
           staff_name || "Staff Member",
-          staff_email || "staff@motofixgarage.com",
+          staff_email || "staff@gmail.com",
           notes?.trim() || null,
           now,
         ],
@@ -1899,7 +1918,7 @@ Automated local-first alert from SQLite Database
                 ${p.reorder_threshold}
               </td>
               <td style="padding: 10px 4px; text-align: right; font-family: monospace; color: #38bdf8; font-weight: bold;">
-                $${Number(p.last_purchased_cost || 0).toFixed(2)}
+                NPR ${Number(p.last_purchased_cost || 0).toFixed(2)}
               </td>
             </tr>
             `;
@@ -1942,7 +1961,10 @@ Automated local-first alert from SQLite Database
   // ---------------- VITE MIDDLEWARE / SPA FALLBACK ----------------
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

@@ -335,10 +335,29 @@ export async function initDatabase() {
     });
   }
 
-  // Check and seed default company email domain setting
+  // Check and seed default company email domain setting (working with gmail.com)
   await dbClient.execute(`
     INSERT OR IGNORE INTO app_settings (key, value)
-    VALUES ('company_email_domain', 'motofixgarage.com');
+    VALUES ('company_email_domain', 'gmail.com');
+  `);
+
+  // Migrate existing staff accounts and app_settings to gmail.com if they were previously motofixgarage.com
+  await dbClient.execute(`
+    UPDATE app_settings
+    SET value = 'gmail.com'
+    WHERE key = 'company_email_domain' AND (value = 'motofixgarage.com' OR value LIKE '%motofix%');
+  `);
+
+  await dbClient.execute(`
+    UPDATE staff_users
+    SET company_email = REPLACE(company_email, '@motofixgarage.com', '@gmail.com')
+    WHERE company_email LIKE '%@motofixgarage.com';
+  `);
+
+  await dbClient.execute(`
+    UPDATE sales_receipts
+    SET staff_email = REPLACE(staff_email, '@motofixgarage.com', '@gmail.com')
+    WHERE staff_email LIKE '%@motofixgarage.com';
   `);
 
   // Check and seed starter staff users if empty
@@ -350,7 +369,7 @@ export async function initDatabase() {
         id: "staff-1",
         username: "alex.tech",
         name: "Alex Rivera",
-        company_email: "alex.tech@motofixgarage.com",
+        company_email: "alex.tech@gmail.com",
         access_code: "4829",
         role: "staff",
         status: "active",
@@ -362,7 +381,7 @@ export async function initDatabase() {
         id: "staff-2",
         username: "sam.counter",
         name: "Sam Miller",
-        company_email: "sam.counter@motofixgarage.com",
+        company_email: "sam.counter@gmail.com",
         access_code: "1234",
         role: "staff",
         status: "active",
@@ -410,7 +429,7 @@ export async function initDatabase() {
         "staff-1",
         "alex.tech",
         "Alex Rivera",
-        "alex.tech@motofixgarage.com",
+        "alex.tech@gmail.com",
         "Customer walked in for oil change package & NGK spark plugs",
         new Date(Date.now() - 86400000).toISOString(),
       ],
@@ -462,7 +481,7 @@ export async function initDatabase() {
         staff_id: "staff-1",
         staff_username: "alex.tech",
         staff_name: "Alex Rivera",
-        staff_email: "alex.tech@motofixgarage.com",
+        staff_email: "alex.tech@gmail.com",
         notes: "600RR Track prep: 4L Motul Synthetic, KN filter & front pads",
         created_at: new Date(Date.now() - 1 * 86400000).toISOString(),
         items: [
@@ -484,7 +503,7 @@ export async function initDatabase() {
         staff_id: "staff-2",
         staff_username: "sam.counter",
         staff_name: "Sam Miller",
-        staff_email: "sam.counter@motofixgarage.com",
+        staff_email: "sam.counter@gmail.com",
         notes: "Duke 390 oil change and spark plug check",
         created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
         items: [
@@ -506,7 +525,7 @@ export async function initDatabase() {
         staff_id: "staff-2",
         staff_username: "sam.counter",
         staff_name: "Sam Miller",
-        staff_email: "sam.counter@motofixgarage.com",
+        staff_email: "sam.counter@gmail.com",
         notes: "Full service pack: spark plugs, brake pads, and oil",
         created_at: new Date(Date.now() - 3 * 86400000).toISOString(),
         items: [
@@ -528,7 +547,7 @@ export async function initDatabase() {
         staff_id: "staff-1",
         staff_username: "alex.tech",
         staff_name: "Alex Rivera",
-        staff_email: "alex.tech@motofixgarage.com",
+        staff_email: "alex.tech@gmail.com",
         notes: "Engine service & brake hardware upgrade",
         created_at: new Date(Date.now() - 5 * 86400000).toISOString(),
         items: [
@@ -550,7 +569,7 @@ export async function initDatabase() {
         staff_id: "staff-1",
         staff_username: "alex.tech",
         staff_name: "Alex Rivera",
-        staff_email: "alex.tech@motofixgarage.com",
+        staff_email: "alex.tech@gmail.com",
         notes: "Front Michelin Road 6 tires replacement and caliper bolts",
         created_at: new Date(Date.now() - 7 * 86400000).toISOString(),
         items: [
@@ -571,7 +590,7 @@ export async function initDatabase() {
         staff_id: "staff-2",
         staff_username: "sam.counter",
         staff_name: "Sam Miller",
-        staff_email: "sam.counter@motofixgarage.com",
+        staff_email: "sam.counter@gmail.com",
         notes: "Front tire replacement",
         created_at: new Date(Date.now() - 10 * 86400000).toISOString(),
         items: [
@@ -591,7 +610,7 @@ export async function initDatabase() {
         staff_id: "staff-1",
         staff_username: "alex.tech",
         staff_name: "Alex Rivera",
-        staff_email: "alex.tech@motofixgarage.com",
+        staff_email: "alex.tech@gmail.com",
         notes: "Fluids and filter change",
         created_at: new Date(Date.now() - 14 * 86400000).toISOString(),
         items: [
@@ -613,7 +632,7 @@ export async function initDatabase() {
         staff_id: "staff-2",
         staff_username: "sam.counter",
         staff_name: "Sam Miller",
-        staff_email: "sam.counter@motofixgarage.com",
+        staff_email: "sam.counter@gmail.com",
         notes: "Drive chain replacement & engine tune up",
         created_at: new Date(Date.now() - 19 * 86400000).toISOString(),
         items: [
@@ -635,7 +654,7 @@ export async function initDatabase() {
         staff_id: "staff-1",
         staff_username: "alex.tech",
         staff_name: "Alex Rivera",
-        staff_email: "alex.tech@motofixgarage.com",
+        staff_email: "alex.tech@gmail.com",
         notes: "Routine maintenance and fresh filters",
         created_at: new Date(Date.now() - 25 * 86400000).toISOString(),
         items: [

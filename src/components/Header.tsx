@@ -1,5 +1,5 @@
 import React from "react";
-import { Wrench, Database, Cloud, Users, Bell, LogIn, LogOut, CheckCircle2 } from "lucide-react";
+import { Wrench, Database, Cloud, Users, Bell, LogIn, LogOut, CheckCircle2, Sparkles, Share2 } from "lucide-react";
 import { DriveConfigStatus } from "../types.ts";
 import { User } from "firebase/auth";
 
@@ -16,6 +16,7 @@ interface HeaderProps {
   onOpenStaffManagement: () => void;
   onSwitchToStaffPortal: () => void;
   onOpenNotificationCenter: () => void;
+  onOpenAiStudioModal: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -31,6 +32,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenStaffManagement,
   onSwitchToStaffPortal,
   onOpenNotificationCenter,
+  onOpenAiStudioModal,
 }) => {
   return (
     <header className="bg-slate-900 border-b border-slate-800 text-slate-100 sticky top-0 z-30 shadow-md">
@@ -119,6 +121,17 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Users className="w-3.5 h-3.5 text-amber-400" />
               <span className="hidden sm:inline">Staff Link</span>
+            </button>
+
+            {/* Open in AI Studio with Different Email */}
+            <button
+              id="ai-studio-share-btn"
+              onClick={onOpenAiStudioModal}
+              title="Open in Google AI Studio with another email account"
+              className="px-2.5 py-1.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 transition-colors flex items-center space-x-1.5 text-xs font-mono font-semibold"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+              <span className="hidden lg:inline">AI Studio Link</span>
             </button>
 
             {/* Low-Stock Notification Bell */}

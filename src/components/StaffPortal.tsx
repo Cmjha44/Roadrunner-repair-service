@@ -38,7 +38,7 @@ export function StaffPortal({ onExitStaffPortal }: StaffPortalProps) {
   const [accessCode, setAccessCode] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const [companyDomain, setCompanyDomain] = useState("motofixgarage.com");
+  const [companyDomain, setCompanyDomain] = useState("gmail.com");
 
   // Preselected inventory item to transfer to sell receipt
   const [preselectedItem, setPreselectedItem] = useState<StaffInventoryItem | null>(null);
@@ -176,7 +176,7 @@ export function StaffPortal({ onExitStaffPortal }: StaffPortalProps) {
                   />
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1">
-                  Must be your verified garage company email address.
+                  Enter your registered Gmail address or staff email.
                 </p>
               </div>
 
@@ -223,7 +223,7 @@ export function StaffPortal({ onExitStaffPortal }: StaffPortalProps) {
                 className="w-full py-2.5 px-4 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs uppercase tracking-wider flex items-center justify-center space-x-2 transition-colors shadow-md mt-2"
               >
                 {isLoggingIn ? (
-                  <span>Verifying Company Credentials...</span>
+                  <span>Verifying Credentials...</span>
                 ) : (
                   <>
                     <Lock className="w-4 h-4" />
@@ -243,7 +243,7 @@ export function StaffPortal({ onExitStaffPortal }: StaffPortalProps) {
                 <button
                   type="button"
                   onClick={() =>
-                    handleQuickFill("alex.tech", "alex.tech@motofixgarage.com", "4829")
+                    handleQuickFill("alex.tech", "alex.tech@gmail.com", "4829")
                   }
                   className="p-2 rounded bg-slate-950 border border-slate-800 hover:border-amber-500/50 text-left transition-colors"
                 >
@@ -254,7 +254,7 @@ export function StaffPortal({ onExitStaffPortal }: StaffPortalProps) {
                 <button
                   type="button"
                   onClick={() =>
-                    handleQuickFill("sam.counter", "sam.counter@motofixgarage.com", "1234")
+                    handleQuickFill("sam.counter", "sam.counter@gmail.com", "1234")
                   }
                   className="p-2 rounded bg-slate-950 border border-slate-800 hover:border-amber-500/50 text-left transition-colors"
                 >

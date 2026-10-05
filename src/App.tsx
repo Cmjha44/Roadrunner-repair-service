@@ -9,6 +9,7 @@ import { GoogleDriveModal } from "./components/GoogleDriveModal.tsx";
 import { StaffPortal } from "./components/StaffPortal.tsx";
 import { StaffManagementModal } from "./components/StaffManagementModal.tsx";
 import { NotificationCenterModal } from "./components/NotificationCenterModal.tsx";
+import { AiStudioShareModal } from "./components/AiStudioShareModal.tsx";
 import { LowStockBanner } from "./components/LowStockBanner.tsx";
 import { ParsedReceiptData, DriveConfigStatus } from "./types.ts";
 import {
@@ -38,6 +39,7 @@ export default function App() {
 
   const [isStaffManagementOpen, setIsStaffManagementOpen] = useState(false);
   const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
+  const [isAiStudioModalOpen, setIsAiStudioModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"scan" | "inventory" | "ledger" | "movements">("scan");
 
   // Google Authentication state
@@ -208,6 +210,7 @@ export default function App() {
         onOpenDriveSettings={() => setIsDriveModalOpen(true)}
         onOpenStaffManagement={() => setIsStaffManagementOpen(true)}
         onOpenNotificationCenter={() => setIsNotificationModalOpen(true)}
+        onOpenAiStudioModal={() => setIsAiStudioModalOpen(true)}
         onSwitchToStaffPortal={() => {
           setIsStaffPortalActive(true);
           const url = new URL(window.location.href);
@@ -345,7 +348,10 @@ export default function App() {
         ) : (
           <>
             {activeTab === "scan" && (
-              <ReceiptCapture onParsedSuccess={handleParsedSuccess} />
+              <ReceiptCapture
+                onParsedSuccess={handleParsedSuccess}
+                onOpenAiStudioModal={() => setIsAiStudioModalOpen(true)}
+              />
             )}
 
             {activeTab === "inventory" && (
@@ -399,6 +405,14 @@ export default function App() {
           setRefreshTrigger((prev) => prev + 1);
           fetchGarageMeta();
         }}
+      />
+
+      {/* Google AI Studio Multi-Account & Sharing Modal */}
+      <AiStudioShareModal
+        isOpen={isAiStudioModalOpen}
+        onClose={() => setIsAiStudioModalOpen(false)}
+        appletId="f87bdbe3-6ea8-4d5e-8f60-cc03aff019f9"
+        defaultEmail="chandra.jha44@gmail.com"
       />
 
       {/* Footer */}

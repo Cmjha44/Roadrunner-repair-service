@@ -8,9 +8,12 @@ import {
   CheckCircle2,
   RefreshCw,
   Zap,
+  QrCode,
+  ExternalLink,
 } from "lucide-react";
 import { SAMPLE_RECEIPTS, SampleReceipt } from "../data/sampleReceipts.ts";
 import { ParsedReceiptData } from "../types.ts";
+import { BoxQrScanner } from "./BoxQrScanner.tsx";
 
 interface ReceiptCaptureProps {
   onParsedSuccess: (
@@ -19,9 +22,14 @@ interface ReceiptCaptureProps {
     filename: string,
     mimeType: string
   ) => void;
+  onOpenAiStudioModal?: () => void;
 }
 
-export const ReceiptCapture: React.FC<ReceiptCaptureProps> = ({ onParsedSuccess }) => {
+export const ReceiptCapture: React.FC<ReceiptCaptureProps> = ({
+  onParsedSuccess,
+  onOpenAiStudioModal,
+}) => {
+  const [captureMode, setCaptureMode] = useState<"ocr" | "qr">("ocr");
   const [selectedFile, setSelectedFile] = useState<{
     dataUrl: string;
     name: string;
@@ -135,8 +143,62 @@ export const ReceiptCapture: React.FC<ReceiptCaptureProps> = ({ onParsedSuccess 
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* Garage Workstation Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-md text-slate-100">
+      {/* Intake Method Mode Switcher (Receipt OCR vs Box QR Scanner) */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800 shadow-sm">
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={() => setCaptureMode("ocr")}
+            className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-mono font-bold flex items-center justify-center space-x-2 transition-all ${
+              captureMode === "ocr"
+                ? "bg-amber-500 text-slate-950 shadow"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Supplier Receipt OCR</span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-qr-box-scanner"
+            onClick={() => setCaptureMode("qr")}
+            className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-xs font-mono font-bold flex items-center justify-center space-x-2 transition-all ${
+              captureMode === "qr"
+                ? "bg-amber-500 text-slate-950 shadow"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            }`}
+          >
+            <QrCode className="w-4 h-4" />
+            <span>Scan Box QR Label</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-950/60 text-amber-300 font-normal">
+              Live
+            </span>
+          </button>
+        </div>
+
+        {onOpenAiStudioModal && (
+          <button
+            type="button"
+            onClick={onOpenAiStudioModal}
+            className="text-[11px] font-mono text-sky-400 hover:text-sky-300 flex items-center justify-center sm:justify-end space-x-1.5 px-3 py-1.5 rounded-lg bg-sky-950/40 border border-sky-800/40 hover:bg-sky-950/60 transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+            <span>Open in AI Studio with another email</span>
+            <ExternalLink className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+
+      {captureMode === "qr" ? (
+        <BoxQrScanner
+          onParsedSuccess={onParsedSuccess}
+          onOpenAiStudioModal={onOpenAiStudioModal}
+        />
+      ) : (
+        <>
+          {/* Garage Workstation Banner */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-md text-slate-100">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div>
             <span className="inline-flex items-center px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-2">
@@ -352,6 +414,8 @@ export const ReceiptCapture: React.FC<ReceiptCaptureProps> = ({ onParsedSuccess 
           ))}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

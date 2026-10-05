@@ -48,6 +48,11 @@ export function StaffManagementModal({
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [updatedCode, setUpdatedCode] = useState("");
 
+  // Email domain settings
+  const [configuredDomain, setConfiguredDomain] = useState("gmail.com");
+  const [isEditingDomain, setIsEditingDomain] = useState(false);
+  const [newDomainInput, setNewDomainInput] = useState("gmail.com");
+
   const staffPortalUrl =
     typeof window !== "undefined"
       ? `${window.location.origin}/?portal=staff`
@@ -56,15 +61,44 @@ export function StaffManagementModal({
   const fetchStaffUsers = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/staff/users");
-      const json = await res.json();
+      const [resStaff, resConfig] = await Promise.all([
+        fetch("/api/staff/users"),
+        fetch("/api/staff/config").catch(() => null),
+      ]);
+
+      const json = await resStaff.json();
       if (json.staff) {
         setStaffUsers(json.staff);
+      }
+
+      if (resConfig) {
+        const jsonConfig = await resConfig.json();
+        if (jsonConfig?.companyDomain) {
+          setConfiguredDomain(jsonConfig.companyDomain);
+          setNewDomainInput(jsonConfig.companyDomain);
+        }
       }
     } catch (err) {
       console.error("Failed to load staff accounts:", err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSaveDomain = async () => {
+    try {
+      const clean = newDomainInput.trim().toLowerCase().replace(/^@/, "");
+      if (!clean) return;
+      await fetch("/api/staff/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyDomain: clean }),
+      });
+      setConfiguredDomain(clean);
+      setIsEditingDomain(false);
+      fetchStaffUsers();
+    } catch (err) {
+      console.error("Failed to update domain:", err);
     }
   };
 
@@ -343,23 +377,74 @@ export function StaffManagementModal({
           {/* TAB 2: STAFF USERS & CODES */}
           {activeSubTab === "users" && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-white font-mono">
                     Authorized Staff Accounts
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Staff must use their registered company email, username, and code to log in.
+                    Staff must use their registered Gmail address (or company email), username, and PIN to log in.
                   </p>
                 </div>
 
                 <button
                   onClick={() => setIsAdding(!isAdding)}
-                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs flex items-center space-x-1"
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs flex items-center space-x-1 shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Add Staff Member</span>
                 </button>
+              </div>
+
+              {/* Email Domain Configuration Card */}
+              <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+                <div className="flex items-center space-x-2">
+                  <Mail className="w-4 h-4 text-amber-400 shrink-0" />
+                  <div>
+                    <span className="text-slate-400">Staff Email Domain: </span>
+                    <strong className="text-white font-mono">@{configuredDomain}</strong>
+                    {configuredDomain === "gmail.com" && (
+                      <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        Gmail Accounts Active
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {isEditingDomain ? (
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-slate-500 font-mono text-xs">@</span>
+                    <input
+                      type="text"
+                      value={newDomainInput}
+                      onChange={(e) => setNewDomainInput(e.target.value)}
+                      placeholder="gmail.com"
+                      className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono w-32 focus:outline-none focus:border-amber-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveDomain}
+                      className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingDomain(false)}
+                      className="px-2 py-1 rounded bg-slate-800 text-slate-300 text-xs"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingDomain(true)}
+                    className="text-[11px] text-sky-400 hover:text-sky-300 underline font-mono"
+                  >
+                    Change Domain
+                  </button>
+                )}
               </div>
 
               {/* Add New Staff Form */}
@@ -410,12 +495,12 @@ export function StaffManagementModal({
 
                     <div>
                       <label className="block text-[11px] font-mono text-slate-400 mb-1">
-                        Company Email *
+                        Staff Email (Gmail or custom) *
                       </label>
                       <input
                         type="email"
                         required
-                        placeholder="liam.v@motofixgarage.com"
+                        placeholder="e.g. mechanic.ramesh@gmail.com"
                         value={newEmail}
                         onChange={(e) => setNewEmail(e.target.value)}
                         className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-white font-mono"
@@ -462,7 +547,7 @@ export function StaffManagementModal({
                     <tr>
                       <th className="py-2.5 px-3">Staff Member</th>
                       <th className="py-2.5 px-3">Username</th>
-                      <th className="py-2.5 px-3">Company Email</th>
+                      <th className="py-2.5 px-3">Staff Email (Gmail)</th>
                       <th className="py-2.5 px-3">Access Code</th>
                       <th className="py-2.5 px-3 text-center">Status</th>
                       <th className="py-2.5 px-3 text-right">Actions</th>
