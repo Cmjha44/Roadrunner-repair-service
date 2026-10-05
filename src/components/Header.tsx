@@ -37,33 +37,33 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="bg-slate-900 border-b border-slate-800 text-slate-100 sticky top-0 z-30 shadow-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex items-center justify-between min-h-16 py-2 sm:py-0 gap-3">
           {/* Brand & Workshop Title */}
-          <div className="flex items-center space-x-3">
-            <div className="bg-amber-500 text-slate-950 p-2.5 rounded-lg font-black flex items-center justify-center shadow-inner">
+          <div className="flex items-center space-x-3 shrink-0">
+            <div className="bg-amber-500 text-slate-950 p-2.5 rounded-lg font-black flex items-center justify-center shadow-inner shrink-0">
               <Wrench className="w-5 h-5" />
             </div>
-            <div>
+            <div className="flex flex-col justify-center min-w-0">
               <div className="flex items-center space-x-2">
-                <span className="font-extrabold text-base sm:text-lg tracking-tight text-white uppercase font-mono">
+                <span className="font-extrabold text-xs sm:text-sm md:text-base lg:text-lg tracking-tight text-white uppercase font-mono leading-tight whitespace-nowrap">
                   Road Runner <span className="text-amber-400">Moto Repair Shop</span>
                 </span>
-                <span className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-emerald-400 border border-emerald-900/50 font-mono">
+                <span className="hidden md:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-emerald-400 border border-emerald-900/50 font-mono shrink-0">
                   <Database className="w-3 h-3 mr-1" />
                   SQLite
                 </span>
-                <span className="hidden md:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-sky-400 border border-sky-900/50 font-mono">
+                <span className="hidden xl:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-sky-400 border border-sky-900/50 font-mono shrink-0">
                   Drive Sync
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 hidden sm:block">
+              <p className="text-[11px] text-slate-400 mt-1 leading-normal hidden sm:block whitespace-nowrap truncate">
                 Receipts Scanner • Spare Parts Inventory • Google Drive Archival
               </p>
             </div>
           </div>
 
           {/* Navigation Tabs */}
-          <nav className="flex items-center space-x-1 sm:space-x-2">
+          <nav className="flex items-center space-x-1 sm:space-x-1.5 overflow-x-auto py-1 scrollbar-none">
             <button
               id="nav-scan-tab"
               onClick={() => setActiveTab("scan")}

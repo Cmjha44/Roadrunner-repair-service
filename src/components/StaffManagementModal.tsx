@@ -17,24 +17,30 @@ import {
   X,
   AlertCircle,
   Receipt,
+  Edit3,
+  RotateCcw,
+  CheckCircle2,
 } from "lucide-react";
 
 interface StaffManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenStaffPortal: () => void;
+  onOpenLedgerReset?: () => void;
 }
 
 export function StaffManagementModal({
   isOpen,
   onClose,
   onOpenStaffPortal,
+  onOpenLedgerReset,
 }: StaffManagementModalProps) {
   const [activeSubTab, setActiveSubTab] = useState<"link" | "users" | "all_sales">("link");
   const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
   const [allSales, setAllSales] = useState<SaleReceipt[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
 
   // Form to add staff member
   const [isAdding, setIsAdding] = useState(false);
@@ -42,9 +48,21 @@ export function StaffManagementModal({
   const [newUsername, setNewUsername] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newCode, setNewCode] = useState("");
+  const [newRole, setNewRole] = useState<"staff" | "admin">("staff");
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Editing access code
+  // Full Edit staff state
+  const [editingStaff, setEditingStaff] = useState<StaffUser | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editUsername, setEditUsername] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editCode, setEditCode] = useState("");
+  const [editRole, setEditRole] = useState<"staff" | "admin">("staff");
+  const [editStatus, setEditStatus] = useState<"active" | "inactive">("active");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  // Editing quick access code inline
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [updatedCode, setUpdatedCode] = useState("");
 
@@ -145,6 +163,7 @@ export function StaffManagementModal({
           username: newUsername,
           company_email: newEmail,
           access_code: newCode,
+          role: newRole,
         }),
       });
 
@@ -153,15 +172,71 @@ export function StaffManagementModal({
         throw new Error(json.error || "Failed to create staff member.");
       }
 
+      setActionSuccessMessage(`Staff member ${newName} added successfully.`);
+      setTimeout(() => setActionSuccessMessage(null), 3500);
+
       // Reset form
       setNewName("");
       setNewUsername("");
       setNewEmail("");
       setNewCode("");
+      setNewRole("staff");
       setIsAdding(false);
       fetchStaffUsers();
     } catch (err: any) {
       setFormError(err.message || "Failed to add staff member.");
+    }
+  };
+
+  const handleStartEdit = (user: StaffUser) => {
+    setEditingStaff(user);
+    setEditName(user.name);
+    setEditUsername(user.username);
+    setEditEmail(user.company_email);
+    setEditCode(user.access_code);
+    setEditRole(user.role || "staff");
+    setEditStatus(user.status || "active");
+    setEditError(null);
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStaff) return;
+    setEditError(null);
+
+    if (!editName.trim() || !editUsername.trim() || !editEmail.trim() || !editCode.trim()) {
+      setEditError("All fields are required.");
+      return;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      const res = await fetch(`/api/staff/users/${editingStaff.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editName.trim(),
+          username: editUsername.trim().toLowerCase(),
+          company_email: editEmail.trim().toLowerCase(),
+          access_code: editCode.trim(),
+          role: editRole,
+          status: editStatus,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to update staff member.");
+      }
+
+      setActionSuccessMessage(`Staff member ${editName} updated successfully.`);
+      setTimeout(() => setActionSuccessMessage(null), 3500);
+      setEditingStaff(null);
+      fetchStaffUsers();
+    } catch (err: any) {
+      setEditError(err.message || "Failed to update staff member.");
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -175,6 +250,8 @@ export function StaffManagementModal({
       });
       setEditingUserId(null);
       setUpdatedCode("");
+      setActionSuccessMessage("Access code updated.");
+      setTimeout(() => setActionSuccessMessage(null), 3000);
       fetchStaffUsers();
     } catch (err) {
       console.error("Failed to update access code:", err);
@@ -189,6 +266,8 @@ export function StaffManagementModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
       });
+      setActionSuccessMessage(`Staff account ${nextStatus === "active" ? "activated" : "deactivated"}.`);
+      setTimeout(() => setActionSuccessMessage(null), 3000);
       fetchStaffUsers();
     } catch (err) {
       console.error("Failed to toggle status:", err);
@@ -196,12 +275,33 @@ export function StaffManagementModal({
   };
 
   const handleDeleteStaff = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to remove staff member ${name}?`)) return;
+    if (!confirm(`Are you sure you want to delete staff account for "${name}"? This action cannot be undone.`)) return;
     try {
-      await fetch(`/api/staff/users/${id}`, { method: "DELETE" });
-      fetchStaffUsers();
+      const res = await fetch(`/api/staff/users/${id}`, { method: "DELETE" });
+      const json = await res.json();
+      if (res.ok) {
+        setActionSuccessMessage(json.message || `Staff member ${name} deleted.`);
+        setTimeout(() => setActionSuccessMessage(null), 3500);
+        fetchStaffUsers();
+      } else {
+        alert(json.error || "Failed to delete staff member.");
+      }
     } catch (err) {
       console.error("Failed to delete staff member:", err);
+    }
+  };
+
+  const handleDeleteSale = async (id: string, receiptNum: string) => {
+    if (!confirm(`Are you sure you want to delete sale receipt #${receiptNum}? This will remove it from the sales ledger.`)) return;
+    try {
+      const res = await fetch(`/api/sales/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setActionSuccessMessage(`Sale #${receiptNum} removed from ledger.`);
+        setTimeout(() => setActionSuccessMessage(null), 3000);
+        fetchAllSales();
+      }
+    } catch (err) {
+      console.error("Failed to delete sale:", err);
     }
   };
 
@@ -520,6 +620,20 @@ export function StaffManagementModal({
                         className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-white font-mono tracking-wider"
                       />
                     </div>
+
+                    <div>
+                      <label className="block text-[11px] font-mono text-slate-400 mb-1">
+                        Role
+                      </label>
+                      <select
+                        value={newRole}
+                        onChange={(e) => setNewRole(e.target.value as "staff" | "admin")}
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-white font-mono"
+                      >
+                        <option value="staff">Staff / Counter</option>
+                        <option value="admin">Supervisor / Admin</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div className="flex justify-end space-x-2 pt-2">
@@ -548,6 +662,7 @@ export function StaffManagementModal({
                       <th className="py-2.5 px-3">Staff Member</th>
                       <th className="py-2.5 px-3">Username</th>
                       <th className="py-2.5 px-3">Staff Email (Gmail)</th>
+                      <th className="py-2.5 px-3">Role</th>
                       <th className="py-2.5 px-3">Access Code</th>
                       <th className="py-2.5 px-3 text-center">Status</th>
                       <th className="py-2.5 px-3 text-right">Actions</th>
@@ -564,6 +679,15 @@ export function StaffManagementModal({
                         </td>
                         <td className="py-2.5 px-3 font-mono text-slate-300">
                           {user.company_email}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold ${
+                            user.role === "admin"
+                              ? "bg-purple-500/10 text-purple-400 border border-purple-500/20"
+                              : "bg-slate-800 text-slate-400"
+                          }`}>
+                            {user.role || "staff"}
+                          </span>
                         </td>
                         <td className="py-2.5 px-3 font-mono">
                           {editingUserId === user.id ? (
@@ -605,21 +729,23 @@ export function StaffManagementModal({
                             {user.status === "active" ? "Active" : "Disabled"}
                           </button>
                         </td>
-                        <td className="py-2.5 px-3 text-right space-x-2">
+                        <td className="py-2.5 px-3 text-right space-x-1.5 whitespace-nowrap">
                           <button
-                            onClick={() => {
-                              setEditingUserId(user.id);
-                              setUpdatedCode(user.access_code);
-                            }}
-                            className="text-slate-400 hover:text-amber-400 text-[11px] font-mono"
+                            type="button"
+                            onClick={() => handleStartEdit(user)}
+                            title={`Edit staff details for ${user.name}`}
+                            className="inline-flex items-center px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 text-[11px] font-mono font-medium transition-colors"
                           >
-                            Edit Code
+                            <Edit3 className="w-3 h-3 mr-1" />
+                            <span>Edit</span>
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleDeleteStaff(user.id, user.name)}
-                            className="text-slate-500 hover:text-rose-400"
+                            title={`Delete staff account for ${user.name}`}
+                            className="inline-flex items-center p-1 rounded bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 text-[11px] transition-colors"
                           >
-                            <Trash2 className="w-3.5 h-3.5 inline" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </td>
                       </tr>
@@ -633,7 +759,7 @@ export function StaffManagementModal({
           {/* TAB 3: CUSTOMER SALES LEDGER */}
           {activeSubTab === "all_sales" && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-white font-mono">
                     Garage Customer Sales Ledger
@@ -643,9 +769,22 @@ export function StaffManagementModal({
                   </p>
                 </div>
 
-                <div className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-mono">
-                  <span className="text-slate-400 mr-2">Total Sales Revenue:</span>
-                  <span className="text-emerald-400 font-bold">{formatNpr(totalSalesRevenue)}</span>
+                <div className="flex items-center space-x-2">
+                  <div className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-mono">
+                    <span className="text-slate-400 mr-2">Total Sales:</span>
+                    <span className="text-emerald-400 font-bold">{formatNpr(totalSalesRevenue)}</span>
+                  </div>
+
+                  {onOpenLedgerReset && (
+                    <button
+                      type="button"
+                      onClick={onOpenLedgerReset}
+                      className="inline-flex items-center px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-mono font-semibold transition-colors"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 mr-1 text-rose-400" />
+                      <span>Reset Ledger</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -658,12 +797,13 @@ export function StaffManagementModal({
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[11px] border-b border-slate-800">
                       <tr>
-                        <th className="py-2.5 px-3">Receipt #</th>
+                        <th className="py-2.5 px-3">Invoice / Receipt #</th>
                         <th className="py-2.5 px-3">Date</th>
                         <th className="py-2.5 px-3">Customer</th>
-                        <th className="py-2.5 px-3">Bike / WO</th>
+                        <th className="py-2.5 px-3">Bike / Model</th>
                         <th className="py-2.5 px-3">Staff Seller</th>
                         <th className="py-2.5 px-3 text-right">Amount</th>
+                        <th className="py-2.5 px-3 text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60">
@@ -690,6 +830,16 @@ export function StaffManagementModal({
                           <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">
                             {formatNpr(sale.total_amount)}
                           </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSale(sale.id, sale.receipt_number)}
+                              title={`Delete sale #${sale.receipt_number}`}
+                              className="p-1 rounded bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -699,6 +849,128 @@ export function StaffManagementModal({
             </div>
           )}
         </div>
+
+        {/* Edit Staff Modal Overlay */}
+        {editingStaff && (
+          <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-5 shadow-2xl text-slate-100 space-y-4 animate-in fade-in zoom-in-95">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center">
+                    <Edit3 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white font-mono">Edit Staff Member</h3>
+                    <p className="text-[11px] text-slate-400">Update name, email, credentials or role</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingStaff(null)}
+                  className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {editError && (
+                <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{editError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveEdit} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-400 mb-1">Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-400 mb-1">Username *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editUsername}
+                    onChange={(e) => setEditUsername(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-400 mb-1">Staff Email (Gmail or custom) *</label>
+                  <input
+                    type="email"
+                    required
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-mono text-slate-400 mb-1">Access PIN *</label>
+                    <input
+                      type="text"
+                      required
+                      value={editCode}
+                      onChange={(e) => setEditCode(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono tracking-wider"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-mono text-slate-400 mb-1">Role</label>
+                    <select
+                      value={editRole}
+                      onChange={(e) => setEditRole(e.target.value as "staff" | "admin")}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                    >
+                      <option value="staff">Staff</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono text-slate-400 mb-1">Account Status</label>
+                  <select
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value as "active" | "inactive")}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono"
+                  >
+                    <option value="active">Active (Access Allowed)</option>
+                    <option value="inactive">Disabled (Access Blocked)</option>
+                  </select>
+                </div>
+
+                <div className="flex justify-end space-x-2 pt-3 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setEditingStaff(null)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-mono text-xs hover:bg-slate-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingEdit}
+                    className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs flex items-center space-x-1"
+                  >
+                    {isSavingEdit ? "Saving..." : "Save Changes"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* Modal Footer */}
         <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs font-mono text-slate-500">

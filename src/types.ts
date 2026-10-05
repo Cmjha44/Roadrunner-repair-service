@@ -124,12 +124,30 @@ export interface StaffUser {
   created_at: string;
 }
 
+export interface LedgerStats {
+  sales: {
+    count: number;
+    totalAmount: number;
+  };
+  receipts: {
+    count: number;
+    totalAmount: number;
+  };
+  stockMovements: {
+    count: number;
+  };
+  inventory: {
+    itemsCount: number;
+    totalUnits: number;
+  };
+}
+
 export interface StaffSession {
   id: string;
   username: string;
   name: string;
   company_email: string;
-  role: "staff";
+  role: "staff" | "admin";
   first_login_completed?: boolean;
 }
 

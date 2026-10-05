@@ -108,6 +108,68 @@ async function startServer() {
     }
   });
 
+  // Helper to generate sequential invoice / receipt codes depending on Month, Date, and Year
+  // Format: INV-YYYYMMDD-001 (e.g., INV-20261005-001, INV-20261005-002, etc.)
+  async function getNextSequentialInvoiceCode(
+    targetDate?: string | Date,
+    prefix: string = "INV"
+  ) {
+    let d: Date;
+    if (!targetDate) {
+      d = new Date();
+    } else if (typeof targetDate === "string") {
+      d = new Date(targetDate.includes("T") ? targetDate : `${targetDate}T12:00:00`);
+      if (isNaN(d.getTime())) d = new Date();
+    } else {
+      d = targetDate;
+    }
+
+    const yyyy = String(d.getFullYear());
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const dateKey = `${yyyy}${mm}${dd}`;
+    const searchPattern = `${prefix}-${dateKey}-%`;
+
+    // Query sales receipts matching this date prefix
+    const salesRows = await dbClient.execute({
+      sql: `SELECT receipt_number FROM sales_receipts WHERE receipt_number LIKE ?`,
+      args: [searchPattern],
+    });
+
+    // Also query intake receipts matching this date prefix
+    const intakeRows = await dbClient.execute({
+      sql: `SELECT receipt_number FROM receipts WHERE receipt_number LIKE ?`,
+      args: [searchPattern],
+    });
+
+    let maxSeq = 0;
+    const allRows = [...salesRows.rows, ...intakeRows.rows];
+    for (const row of allRows) {
+      const code = String(row.receipt_number || "").trim();
+      const match = code.match(/(\d+)$/);
+      if (match) {
+        const seqVal = parseInt(match[1], 10);
+        if (!isNaN(seqVal) && seqVal > maxSeq) {
+          maxSeq = seqVal;
+        }
+      }
+    }
+
+    const nextSeq = maxSeq + 1;
+    const paddedSeq = String(nextSeq).padStart(3, "0");
+    const nextCode = `${prefix}-${dateKey}-${paddedSeq}`;
+
+    return {
+      nextCode,
+      year: yyyy,
+      month: mm,
+      date: dd,
+      sequence: nextSeq,
+      formattedDate: `${yyyy}-${mm}-${dd}`,
+      dateKey,
+    };
+  }
+
   // 2. APPROVE RECEIPT & SYNC INVENTORY & ARCHIVE TO GOOGLE DRIVE
   app.post("/api/receipts/approve", async (req, res) => {
     try {
@@ -127,6 +189,13 @@ async function startServer() {
 
       if (!vendor_name || !total_amount || !items || !Array.isArray(items)) {
         return res.status(400).json({ error: "Invalid receipt payload." });
+      }
+
+      // Auto-assign sequential invoice code if receipt number is missing or empty
+      let finalReceiptNumber = receipt_number ? String(receipt_number).trim() : "";
+      if (!finalReceiptNumber) {
+        const seq = await getNextSequentialInvoiceCode(transaction_date || new Date(), "INV");
+        finalReceiptNumber = seq.nextCode;
       }
 
       // 1. Google Drive & Local Archiving
@@ -174,7 +243,7 @@ async function startServer() {
           receiptId,
           vendor_name,
           transaction_date || now.split("T")[0],
-          receipt_number || "",
+          finalReceiptNumber,
           Number(subtotal) || 0,
           Number(tax) || 0,
           Number(total_amount),
@@ -296,7 +365,7 @@ async function startServer() {
             "RESTOCK_RECEIPT",
             qty,
             qtyAfter,
-            `Receipt intake from ${vendor_name} (#${receipt_number || "N/A"})`,
+            `Receipt intake from ${vendor_name} (#${finalReceiptNumber || "N/A"})`,
             unitCost,
             receiptId,
             now,
@@ -534,28 +603,54 @@ async function startServer() {
     }
   });
 
-  // 7. EDIT INVENTORY PART
+  // 7. EDIT INVENTORY PART (Supports updating stock_quantity to zero or any value)
   app.patch("/api/inventory/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const { sku, name, category, reorder_threshold, selling_price, location_bin } = req.body;
+      const {
+        sku,
+        name,
+        category,
+        stock_quantity,
+        reorder_threshold,
+        last_purchased_cost,
+        selling_price,
+        location_bin,
+      } = req.body;
       const now = new Date().toISOString();
+
+      const existingPartRes = await dbClient.execute({
+        sql: "SELECT * FROM inventory WHERE id = ?",
+        args: [id],
+      });
+      if (existingPartRes.rows.length === 0) {
+        return res.status(404).json({ error: "Part not found." });
+      }
+
+      const existingPart = existingPartRes.rows[0];
+      const oldStock = Number(existingPart.stock_quantity) || 0;
+      const hasNewStock = stock_quantity !== undefined && stock_quantity !== null && stock_quantity !== "";
+      const newStock = hasNewStock ? Math.max(0, Number(stock_quantity)) : oldStock;
 
       await dbClient.execute({
         sql: `UPDATE inventory SET
                 sku = COALESCE(?, sku),
                 name = COALESCE(?, name),
                 category = COALESCE(?, category),
+                stock_quantity = ?,
                 reorder_threshold = COALESCE(?, reorder_threshold),
+                last_purchased_cost = COALESCE(?, last_purchased_cost),
                 selling_price = COALESCE(?, selling_price),
                 location_bin = COALESCE(?, location_bin),
                 updated_at = ?
               WHERE id = ?`,
         args: [
           sku || null,
-          name || null,
+          name ? String(name).trim() : null,
           category || null,
+          newStock,
           reorder_threshold !== undefined ? Number(reorder_threshold) : null,
+          last_purchased_cost !== undefined ? Number(last_purchased_cost) : null,
           selling_price !== undefined ? Number(selling_price) : null,
           location_bin || null,
           now,
@@ -563,9 +658,111 @@ async function startServer() {
         ],
       });
 
-      res.json({ success: true });
+      // If stock quantity was changed, log a stock movement audit entry
+      if (hasNewStock && newStock !== oldStock) {
+        const delta = newStock - oldStock;
+        await dbClient.execute({
+          sql: `INSERT INTO stock_movements (
+                  id, inventory_id, part_name, type, delta, quantity_after, reason, unit_cost, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            `mov-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
+            id,
+            name ? String(name).trim() : existingPart.name,
+            "MANUAL_ADJUST",
+            delta,
+            newStock,
+            newStock === 0 ? "Admin zeroed out inventory item stock" : `Admin manual stock edit (${oldStock} -> ${newStock})`,
+            existingPart.last_purchased_cost,
+            now,
+          ],
+        });
+      }
+
+      res.json({ success: true, newStock, message: "Inventory item updated successfully." });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to update part." });
+    }
+  });
+
+  // 7a. SET ITEM STOCK DIRECTLY TO ZERO
+  app.post("/api/inventory/:id/set-zero", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const now = new Date().toISOString();
+
+      const existingPartRes = await dbClient.execute({
+        sql: "SELECT * FROM inventory WHERE id = ?",
+        args: [id],
+      });
+      if (existingPartRes.rows.length === 0) {
+        return res.status(404).json({ error: "Part not found." });
+      }
+
+      const existingPart = existingPartRes.rows[0];
+      const oldStock = Number(existingPart.stock_quantity) || 0;
+
+      await dbClient.execute({
+        sql: "UPDATE inventory SET stock_quantity = 0, updated_at = ? WHERE id = ?",
+        args: [now, id],
+      });
+
+      if (oldStock > 0) {
+        await dbClient.execute({
+          sql: `INSERT INTO stock_movements (
+                  id, inventory_id, part_name, type, delta, quantity_after, reason, unit_cost, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            `mov-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
+            id,
+            existingPart.name,
+            "MANUAL_ADJUST",
+            -oldStock,
+            0,
+            "Admin zeroed out inventory item stock (Set to 0)",
+            existingPart.last_purchased_cost,
+            now,
+          ],
+        });
+      }
+
+      res.json({
+        success: true,
+        newStock: 0,
+        partName: existingPart.name,
+        message: `Stock for "${existingPart.name}" set to 0.`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to zero out stock." });
+    }
+  });
+
+  // 7b. DELETE INVENTORY PART
+  app.delete("/api/inventory/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existingPartRes = await dbClient.execute({
+        sql: "SELECT name, sku FROM inventory WHERE id = ?",
+        args: [id],
+      });
+      if (existingPartRes.rows.length === 0) {
+        return res.status(404).json({ error: "Part not found." });
+      }
+
+      const partName = existingPartRes.rows[0]?.name || "Part";
+
+      // Delete from inventory
+      await dbClient.execute({
+        sql: "DELETE FROM inventory WHERE id = ?",
+        args: [id],
+      });
+
+      res.json({
+        success: true,
+        message: `Part "${partName}" deleted successfully from inventory catalog.`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to delete part." });
     }
   });
 
@@ -1390,10 +1587,9 @@ async function startServer() {
         });
       }
 
-      // Generate Sales Receipt Number: SALE-YYYY-XXXX
-      const countRes = await dbClient.execute("SELECT COUNT(*) as count FROM sales_receipts");
-      const nextNum = Number(countRes.rows[0]?.count || 0) + 42;
-      const receiptNumber = `SALE-${new Date().getFullYear()}-${String(nextNum).padStart(4, "0")}`;
+      // Generate Sequential Invoice Code based on Month, Date and Year: INV-YYYYMMDD-001
+      const sequential = await getNextSequentialInvoiceCode(new Date(), "INV");
+      const receiptNumber = req.body.receipt_number?.trim() || sequential.nextCode;
 
       let subtotal = 0;
       for (const item of items) {
@@ -1613,6 +1809,195 @@ async function startServer() {
     }
   });
 
+  // 17b. DELETE SINGLE SALE RECEIPT
+  app.delete("/api/sales/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      await dbClient.execute({ sql: "DELETE FROM sale_receipt_items WHERE sale_id = ?", args: [id] });
+      await dbClient.execute({ sql: "DELETE FROM sales_receipts WHERE id = ?", args: [id] });
+      res.json({ success: true, message: "Sale receipt deleted successfully." });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to delete sale receipt." });
+    }
+  });
+
+  // 17c. GET NEXT SEQUENTIAL INVOICE CODE PREVIEW (Month, Date, Year)
+  app.get("/api/invoices/next-code", async (req, res) => {
+    try {
+      const { date, prefix = "INV" } = req.query;
+      const result = await getNextSequentialInvoiceCode(date as string, String(prefix));
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to generate next sequential invoice code." });
+    }
+  });
+
+  // 17c2. TRACK & VERIFY TRANSACTION BY CODE (FOR SHAREABLE QR CODE & CUSTOMER CHECKOUT TRACKING)
+  app.get("/api/transactions/track/:code", async (req, res) => {
+    try {
+      const code = decodeURIComponent(req.params.code).trim();
+
+      // 1. Check customer sales receipts
+      const saleRes = await dbClient.execute({
+        sql: "SELECT * FROM sales_receipts WHERE receipt_number = ? OR id = ? LIMIT 1",
+        args: [code, code],
+      });
+
+      if (saleRes.rows.length > 0) {
+        const sale = saleRes.rows[0];
+        const itemsRes = await dbClient.execute({
+          sql: "SELECT * FROM sale_receipt_items WHERE sale_id = ?",
+          args: [sale.id],
+        });
+        return res.json({
+          success: true,
+          type: "sale",
+          receipt: sale,
+          items: itemsRes.rows,
+        });
+      }
+
+      // 2. Check vendor intake receipts
+      const intakeRes = await dbClient.execute({
+        sql: "SELECT * FROM receipts WHERE receipt_number = ? OR id = ? LIMIT 1",
+        args: [code, code],
+      });
+
+      if (intakeRes.rows.length > 0) {
+        const intake = intakeRes.rows[0];
+        const itemsRes = await dbClient.execute({
+          sql: "SELECT * FROM receipt_items WHERE receipt_id = ?",
+          args: [intake.id],
+        });
+        return res.json({
+          success: true,
+          type: "intake",
+          receipt: intake,
+          items: itemsRes.rows,
+        });
+      }
+
+      return res.status(404).json({ error: `Transaction "${code}" not found.` });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to track transaction." });
+    }
+  });
+
+  // 17d. DELETE SINGLE INTAKE RECEIPT
+  app.delete("/api/receipts/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      await dbClient.execute({ sql: "DELETE FROM receipt_items WHERE receipt_id = ?", args: [id] });
+      await dbClient.execute({ sql: "DELETE FROM receipts WHERE id = ?", args: [id] });
+      res.json({ success: true, message: "Receipt record deleted successfully." });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to delete receipt record." });
+    }
+  });
+
+  // 17e. LEDGER AUDIT STATS & DEPLOYMENT RESET
+  app.get("/api/ledger/stats", async (req, res) => {
+    try {
+      const [salesRes, receiptsRes, movementsRes, inventoryRes] = await Promise.all([
+        dbClient.execute("SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total FROM sales_receipts"),
+        dbClient.execute("SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total FROM receipts"),
+        dbClient.execute("SELECT COUNT(*) as count FROM stock_movements"),
+        dbClient.execute("SELECT COUNT(*) as count, COALESCE(SUM(stock_quantity), 0) as total_units FROM inventory"),
+      ]);
+
+      res.json({
+        sales: {
+          count: Number(salesRes.rows[0]?.count || 0),
+          totalAmount: Number(salesRes.rows[0]?.total || 0),
+        },
+        receipts: {
+          count: Number(receiptsRes.rows[0]?.count || 0),
+          totalAmount: Number(receiptsRes.rows[0]?.total || 0),
+        },
+        stockMovements: {
+          count: Number(movementsRes.rows[0]?.count || 0),
+        },
+        inventory: {
+          itemsCount: Number(inventoryRes.rows[0]?.count || 0),
+          totalUnits: Number(inventoryRes.rows[0]?.total_units || 0),
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to fetch ledger statistics." });
+    }
+  });
+
+  app.post("/api/ledger/reset", async (req, res) => {
+    try {
+      const {
+        resetSales = true,
+        resetReceipts = true,
+        resetStockMovements = true,
+        inventoryOption = "keep", // "keep" | "reset_zero" | "reset_default"
+        confirmText,
+      } = req.body;
+
+      if (!confirmText || String(confirmText).trim().toUpperCase() !== "RESET") {
+        return res.status(400).json({
+          error: "Confirmation text 'RESET' is required to clear recorded ledger entries.",
+        });
+      }
+
+      const now = new Date().toISOString();
+
+      if (resetSales) {
+        await dbClient.execute("DELETE FROM sale_receipt_items");
+        await dbClient.execute("DELETE FROM sales_receipts");
+      }
+
+      if (resetReceipts) {
+        await dbClient.execute("DELETE FROM receipt_items");
+        await dbClient.execute("DELETE FROM receipts");
+      }
+
+      if (resetStockMovements) {
+        await dbClient.execute("DELETE FROM stock_movements");
+      }
+
+      if (inventoryOption === "reset_zero") {
+        await dbClient.execute({
+          sql: "UPDATE inventory SET stock_quantity = 0, last_restocked_at = NULL, updated_at = ?",
+          args: [now],
+        });
+      } else if (inventoryOption === "reset_default") {
+        await dbClient.execute({
+          sql: "UPDATE inventory SET stock_quantity = reorder_threshold * 2, updated_at = ?",
+          args: [now],
+        });
+      }
+
+      // Add a fresh deployment audit entry
+      await dbClient.execute({
+        sql: `INSERT INTO stock_movements (
+                id, inventory_id, part_name, type, delta, quantity_after, reason, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          `mov-deploy-reset-${Date.now()}`,
+          "system",
+          "All Inventory",
+          "MANUAL_ADJUST",
+          0,
+          0,
+          "DEPLOYMENT_RESET: Clean slate initialized for live operations. All past transaction records cleared.",
+          now,
+        ],
+      });
+
+      res.json({
+        success: true,
+        message: "Ledger recorded records successfully reset for deployment.",
+      });
+    } catch (err: any) {
+      console.error("Ledger reset failed:", err);
+      res.status(500).json({ error: err?.message || "Failed to reset recorded ledger." });
+    }
+  });
+
   // 18. ADMIN STAFF MANAGEMENT (List, Add, Update, Delete)
   app.get("/api/staff/users", async (req, res) => {
     try {
@@ -1625,7 +2010,7 @@ async function startServer() {
 
   app.post("/api/staff/users", async (req, res) => {
     try {
-      const { username, name, company_email, access_code } = req.body;
+      const { username, name, company_email, access_code, role = "staff" } = req.body;
 
       if (!username || !name || !company_email || !access_code) {
         return res.status(400).json({ error: "Username, full name, company email, and access code are required." });
@@ -1636,13 +2021,14 @@ async function startServer() {
 
       await dbClient.execute({
         sql: `INSERT INTO staff_users (id, username, name, company_email, access_code, role, status, first_login_completed, created_at)
-              VALUES (?, ?, ?, ?, ?, 'staff', 'active', 0, ?)`,
+              VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?)`,
         args: [
           id,
           String(username).trim().toLowerCase(),
           String(name).trim(),
           String(company_email).trim().toLowerCase(),
           String(access_code).trim(),
+          role === "admin" ? "admin" : "staff",
           now,
         ],
       });
@@ -1659,25 +2045,59 @@ async function startServer() {
   app.patch("/api/staff/users/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, company_email, access_code, status } = req.body;
+      const { name, username, company_email, access_code, role, status } = req.body;
+
+      // Verify staff exists
+      const existingUser = await dbClient.execute({
+        sql: "SELECT * FROM staff_users WHERE id = ?",
+        args: [id],
+      });
+      if (existingUser.rows.length === 0) {
+        return res.status(404).json({ error: "Staff member not found." });
+      }
+
+      // Check unique username if username is changing
+      if (username) {
+        const cleanUser = String(username).trim().toLowerCase();
+        const checkUser = await dbClient.execute({
+          sql: "SELECT id FROM staff_users WHERE LOWER(username) = ? AND id != ?",
+          args: [cleanUser, id],
+        });
+        if (checkUser.rows.length > 0) {
+          return res.status(409).json({ error: "Username is already taken by another staff member." });
+        }
+      }
 
       await dbClient.execute({
         sql: `UPDATE staff_users SET
                 name = COALESCE(?, name),
+                username = COALESCE(?, username),
                 company_email = COALESCE(?, company_email),
                 access_code = COALESCE(?, access_code),
+                role = COALESCE(?, role),
                 status = COALESCE(?, status)
               WHERE id = ?`,
         args: [
           name ? String(name).trim() : null,
+          username ? String(username).trim().toLowerCase() : null,
           company_email ? String(company_email).trim().toLowerCase() : null,
           access_code ? String(access_code).trim() : null,
+          role ? String(role).trim() : null,
           status || null,
           id,
         ],
       });
 
-      res.json({ success: true });
+      const updated = await dbClient.execute({
+        sql: "SELECT id, username, name, company_email, access_code, role, status, first_login_completed, last_login_at, created_at FROM staff_users WHERE id = ?",
+        args: [id],
+      });
+
+      res.json({
+        success: true,
+        staff: updated.rows[0],
+        message: "Staff member updated successfully.",
+      });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to update staff member." });
     }
@@ -1686,11 +2106,17 @@ async function startServer() {
   app.delete("/api/staff/users/:id", async (req, res) => {
     try {
       const { id } = req.params;
+      const userRes = await dbClient.execute({
+        sql: "SELECT name, username FROM staff_users WHERE id = ?",
+        args: [id],
+      });
+      const staffName = userRes.rows[0]?.name || "Staff member";
+
       await dbClient.execute({
         sql: "DELETE FROM staff_users WHERE id = ?",
         args: [id],
       });
-      res.json({ success: true });
+      res.json({ success: true, message: `Staff member ${staffName} deleted successfully.` });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Failed to delete staff member." });
     }

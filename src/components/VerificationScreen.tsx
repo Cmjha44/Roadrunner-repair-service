@@ -336,16 +336,34 @@ export const VerificationScreen: React.FC<VerificationScreenProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-300 uppercase font-mono mb-1">
-                  Invoice / Receipt #
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-semibold text-slate-300 uppercase font-mono">
+                    Invoice / Receipt #
+                  </label>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/invoices/next-code?date=${transactionDate}`);
+                        const json = await res.json();
+                        if (json.nextCode) setReceiptNumber(json.nextCode);
+                      } catch (err) {
+                        console.error(err);
+                      }
+                    }}
+                    className="text-[10px] text-amber-400 hover:text-amber-300 font-mono underline"
+                    title="Generate sequential invoice code depending on month, date and year"
+                  >
+                    Auto Sequential Code
+                  </button>
+                </div>
                 <input
                   id="invoice-number-input"
                   type="text"
                   value={receiptNumber}
                   onChange={(e) => setReceiptNumber(e.target.value)}
-                  className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-xs font-medium focus:border-amber-400 focus:outline-none"
-                  placeholder="e.g. INV-8821"
+                  className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-xs font-medium focus:border-amber-400 focus:outline-none font-mono"
+                  placeholder="e.g. INV-20261005-001"
                 />
               </div>
             </div>

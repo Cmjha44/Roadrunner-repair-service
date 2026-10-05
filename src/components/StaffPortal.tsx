@@ -416,7 +416,10 @@ export function StaffPortal({ onExitStaffPortal }: StaffPortalProps) {
         )}
 
         {activeTab === "inventory" && (
-          <StaffInventoryList onSelectItemForSale={handleSelectItemForSale} />
+          <StaffInventoryList
+            onSelectItemForSale={handleSelectItemForSale}
+            isAdmin={session?.role === "admin"}
+          />
         )}
 
         {activeTab === "history" && (

@@ -10,6 +10,8 @@ import { StaffPortal } from "./components/StaffPortal.tsx";
 import { StaffManagementModal } from "./components/StaffManagementModal.tsx";
 import { NotificationCenterModal } from "./components/NotificationCenterModal.tsx";
 import { AiStudioShareModal } from "./components/AiStudioShareModal.tsx";
+import { LedgerResetModal } from "./components/LedgerResetModal.tsx";
+import { TrackReceiptModal } from "./components/TrackReceiptModal.tsx";
 import { LowStockBanner } from "./components/LowStockBanner.tsx";
 import { ParsedReceiptData, DriveConfigStatus } from "./types.ts";
 import {
@@ -40,6 +42,12 @@ export default function App() {
   const [isStaffManagementOpen, setIsStaffManagementOpen] = useState(false);
   const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
   const [isAiStudioModalOpen, setIsAiStudioModalOpen] = useState(false);
+  const [isLedgerResetModalOpen, setIsLedgerResetModalOpen] = useState(false);
+  const [trackingReceiptCode, setTrackingReceiptCode] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get("track_receipt") || urlParams.get("receipt") || null;
+  });
   const [activeTab, setActiveTab] = useState<"scan" | "inventory" | "ledger" | "movements">("scan");
 
   // Google Authentication state
@@ -359,11 +367,15 @@ export default function App() {
                 onRefreshTrigger={refreshTrigger}
                 onOpenNotificationCenter={() => setIsNotificationModalOpen(true)}
                 onViewReceiptsLedger={() => setActiveTab("ledger")}
+                onOpenLedgerReset={() => setIsLedgerResetModalOpen(true)}
               />
             )}
 
             {activeTab === "ledger" && (
-              <ReceiptHistory onRefreshTrigger={refreshTrigger} />
+              <ReceiptHistory
+                onRefreshTrigger={refreshTrigger}
+                onOpenLedgerReset={() => setIsLedgerResetModalOpen(true)}
+              />
             )}
 
             {activeTab === "movements" && <StockMovementsLog />}
@@ -385,6 +397,7 @@ export default function App() {
       <StaffManagementModal
         isOpen={isStaffManagementOpen}
         onClose={() => setIsStaffManagementOpen(false)}
+        onOpenLedgerReset={() => setIsLedgerResetModalOpen(true)}
         onOpenStaffPortal={() => {
           setIsStaffPortalActive(true);
           const url = new URL(window.location.href);
@@ -407,12 +420,34 @@ export default function App() {
         }}
       />
 
+      {/* Deployment & Ledger Reset Modal */}
+      <LedgerResetModal
+        isOpen={isLedgerResetModalOpen}
+        onClose={() => setIsLedgerResetModalOpen(false)}
+        onResetSuccess={() => {
+          setRefreshTrigger((prev) => prev + 1);
+          fetchGarageMeta();
+        }}
+      />
+
       {/* Google AI Studio Multi-Account & Sharing Modal */}
       <AiStudioShareModal
         isOpen={isAiStudioModalOpen}
         onClose={() => setIsAiStudioModalOpen(false)}
         appletId="f87bdbe3-6ea8-4d5e-8f60-cc03aff019f9"
         defaultEmail="chandra.jha44@gmail.com"
+      />
+
+      {/* Customer Checkout Tracking Modal (Direct URL or QR Scan) */}
+      <TrackReceiptModal
+        receiptCode={trackingReceiptCode}
+        onClose={() => {
+          setTrackingReceiptCode(null);
+          const url = new URL(window.location.href);
+          url.searchParams.delete("track_receipt");
+          url.searchParams.delete("receipt");
+          window.history.replaceState({}, "", url.toString());
+        }}
       />
 
       {/* Footer */}

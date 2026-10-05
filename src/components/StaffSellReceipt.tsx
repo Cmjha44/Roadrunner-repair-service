@@ -63,6 +63,19 @@ export function StaffSellReceipt({
 
   // Completed sale receipt modal
   const [completedSale, setCompletedSale] = useState<SaleReceipt | null>(null);
+  const [nextInvoiceCode, setNextInvoiceCode] = useState<string>("");
+
+  const fetchNextInvoiceCode = async () => {
+    try {
+      const res = await fetch("/api/invoices/next-code");
+      const json = await res.json();
+      if (json.nextCode) {
+        setNextInvoiceCode(json.nextCode);
+      }
+    } catch (err) {
+      console.error("Failed to fetch next invoice code:", err);
+    }
+  };
 
   // Fetch staff inventory
   const fetchInventory = async () => {
@@ -82,6 +95,7 @@ export function StaffSellReceipt({
 
   useEffect(() => {
     fetchInventory();
+    fetchNextInvoiceCode();
   }, []);
 
   // Handle preselected item from inventory view
@@ -215,8 +229,9 @@ export function StaffSellReceipt({
       setCompletedSale(json.receipt);
       if (onSaleCompleted) onSaleCompleted(json.receipt);
 
-      // Refresh stock counts
+      // Refresh stock counts and update next sequential invoice code
       fetchInventory();
+      fetchNextInvoiceCode();
 
       // Reset form
       setCart([]);
@@ -251,6 +266,15 @@ export function StaffSellReceipt({
             <p className="text-xs sm:text-sm text-slate-400 mt-1">
               Select parts from on-hand inventory, enter customer or bike details, and generate an official workshop sell receipt. Stock is automatically decremented upon checkout.
             </p>
+            {nextInvoiceCode && (
+              <div className="mt-2.5 inline-flex items-center space-x-2 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800 text-xs font-mono">
+                <span className="text-slate-400">Next Invoice Code:</span>
+                <span className="text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                  {nextInvoiceCode}
+                </span>
+                <span className="text-[10px] text-slate-500 hidden sm:inline">(Month-Date-Year sequential)</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

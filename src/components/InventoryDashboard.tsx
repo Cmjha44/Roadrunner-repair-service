@@ -25,6 +25,8 @@ import {
   Tag,
   Sparkles,
   TrendingUp,
+  Trash2,
+  RotateCcw,
 } from "lucide-react";
 import {
   InventoryItem,
@@ -41,6 +43,7 @@ interface InventoryDashboardProps {
   onRefreshTrigger?: number;
   onOpenNotificationCenter?: () => void;
   onViewReceiptsLedger?: () => void;
+  onOpenLedgerReset?: () => void;
 }
 
 export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
@@ -48,6 +51,7 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
   onRefreshTrigger = 0,
   onOpenNotificationCenter,
   onViewReceiptsLedger,
+  onOpenLedgerReset,
 }) => {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -230,6 +234,68 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
       }
     } catch (err) {
       console.error("Increment error:", err);
+    }
+  };
+
+  // Quick Zero Out Stock (Set to 0)
+  const handleZeroOutStock = async (item: InventoryItem) => {
+    if (
+      !confirm(
+        `Are you sure you want to set the stock for "${item.name}" to 0? Current stock is ${item.stock_quantity}.`
+      )
+    )
+      return;
+
+    try {
+      const res = await fetch(`/api/inventory/${item.id}/set-zero`, {
+        method: "POST",
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, stock_quantity: 0 } : i))
+        );
+        setActionFeedback({
+          id: item.id,
+          message: `Stock for ${item.name} set to 0`,
+          type: "warning",
+        });
+        setTimeout(() => setActionFeedback(null), 3000);
+      }
+    } catch (err) {
+      console.error("Zero stock error:", err);
+    }
+  };
+
+  // Delete part permanently from catalog
+  const handleDeletePart = async (item: InventoryItem) => {
+    if (
+      !confirm(
+        `Are you sure you want to permanently delete "${item.name}" (${item.sku || "No SKU"}) from the inventory catalog? This action cannot be undone.`
+      )
+    )
+      return;
+
+    try {
+      const res = await fetch(`/api/inventory/${item.id}`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setItems((prev) => prev.filter((i) => i.id !== item.id));
+        if (editingItem?.id === item.id) setEditingItem(null);
+        if (viewingHistoryItem?.id === item.id) setViewingHistoryItem(null);
+        setActionFeedback({
+          id: item.id,
+          message: `Part "${item.name}" deleted from catalog.`,
+          type: "warning",
+        });
+        setTimeout(() => setActionFeedback(null), 3000);
+      } else {
+        alert(json.error || "Failed to delete inventory part.");
+      }
+    } catch (err) {
+      console.error("Delete part error:", err);
     }
   };
 
@@ -581,6 +647,20 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
               </button>
             )}
 
+            {/* Reset / Zero Out Stock for Deployment */}
+            {onOpenLedgerReset && (
+              <button
+                id="inventory-reset-ledger-btn"
+                type="button"
+                onClick={onOpenLedgerReset}
+                className="px-3 py-2 rounded-lg text-xs font-bold font-mono uppercase tracking-wider flex items-center space-x-1.5 border border-rose-500/40 bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 transition-colors"
+                title="Deployment reset: zero out stock or reset recorded ledgers"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                <span className="hidden md:inline">Reset / Zero Stock</span>
+              </button>
+            )}
+
             {/* Add Part Manually */}
             <button
               id="add-part-manual-btn"
@@ -914,6 +994,19 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
                           >
                             <Plus className="w-3.5 h-3.5" />
                           </button>
+
+                          {/* Zero Out Stock Button (Set to 0) */}
+                          <button
+                            id={`zero-${item.id}`}
+                            type="button"
+                            disabled={Number(item.stock_quantity) <= 0}
+                            onClick={() => handleZeroOutStock(item)}
+                            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-rose-900/60 disabled:opacity-25 text-slate-300 hover:text-rose-200 font-mono font-bold text-xs border border-slate-700 hover:border-rose-600 transition-colors shadow-xs flex items-center space-x-1"
+                            title="Zero out stock (Edit stock quantity to 0)"
+                          >
+                            <span className="text-rose-400 font-black text-[11px]">0</span>
+                            <span className="hidden xl:inline text-[10px] text-slate-400">Zero</span>
+                          </button>
                         </div>
                       </td>
 
@@ -942,9 +1035,9 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
                         )}
                       </td>
 
-                      {/* Actions (Edit / History) */}
+                      {/* Actions (History / Edit / Zero / Delete) */}
                       <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end space-x-2">
+                        <div className="flex items-center justify-end space-x-1.5">
                           <button
                             type="button"
                             onClick={() => openItemHistory(item)}
@@ -957,9 +1050,26 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
                             type="button"
                             onClick={() => setEditingItem(item)}
                             className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                            title="Edit Part Details"
+                            title="Edit Part Details & Stock"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={Number(item.stock_quantity) <= 0}
+                            onClick={() => handleZeroOutStock(item)}
+                            className="p-1.5 rounded hover:bg-rose-900/40 disabled:opacity-20 text-slate-400 hover:text-rose-300 transition-colors"
+                            title="Edit item stock to 0"
+                          >
+                            <span className="font-mono text-[10px] font-bold border border-slate-700 hover:border-rose-500 px-1 py-0.5 rounded text-rose-300">0</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePart(item)}
+                            className="p-1.5 rounded hover:bg-rose-900/40 text-slate-500 hover:text-rose-400 transition-colors"
+                            title="Delete part permanently from inventory"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -1191,6 +1301,61 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
                 </div>
               </div>
 
+              {/* Stock Quantity (with Zero Out button) and Selling Price */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-semibold text-slate-300 font-mono uppercase">
+                      Stock Quantity (In-Stock)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditingItem({
+                          ...editingItem,
+                          stock_quantity: 0,
+                        })
+                      }
+                      className="text-[10px] text-rose-400 hover:text-rose-300 font-mono font-bold px-1.5 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 transition-colors"
+                      title="Set in-stock count directly to 0"
+                    >
+                      Set to 0
+                    </button>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    value={editingItem.stock_quantity ?? 0}
+                    onChange={(e) =>
+                      setEditingItem({
+                        ...editingItem,
+                        stock_quantity: Math.max(0, parseInt(e.target.value) || 0),
+                      })
+                    }
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 font-mono focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 font-mono uppercase mb-1">
+                    Selling Price (NPR)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editingItem.selling_price || 0}
+                    onChange={(e) =>
+                      setEditingItem({
+                        ...editingItem,
+                        selling_price: Math.max(0, parseFloat(e.target.value) || 0),
+                      })
+                    }
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 font-mono focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-300 font-mono uppercase mb-1">
@@ -1225,20 +1390,36 @@ export const InventoryDashboard: React.FC<InventoryDashboardProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-800">
+              <div className="flex items-center justify-between pt-3 border-t border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setEditingItem(null)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md font-semibold"
+                  onClick={() => {
+                    const itemToDelete = editingItem;
+                    setEditingItem(null);
+                    handleDeletePart(itemToDelete);
+                  }}
+                  className="px-3 py-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-md font-semibold text-xs flex items-center space-x-1.5 transition-colors"
+                  title="Permanently remove this part from inventory"
                 >
-                  Cancel
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Part</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-md font-bold shadow"
-                >
-                  Update Part
-                </button>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingItem(null)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md font-semibold text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-md font-bold text-xs shadow"
+                  >
+                    Update Part
+                  </button>
+                </div>
               </div>
             </form>
           </div>

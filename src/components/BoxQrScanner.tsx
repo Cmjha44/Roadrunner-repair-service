@@ -1,9 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
 import jsQR from "jsqr";
 import QRCode from "qrcode";
+import JsBarcode from "jsbarcode";
+import {
+  MultiFormatReader,
+  BarcodeFormat,
+  DecodeHintType,
+  RGBLuminanceSource,
+  BinaryBitmap,
+  HybridBinarizer,
+} from "@zxing/library";
 import {
   Camera,
   QrCode,
+  Barcode,
+  ScanBarcode,
+  ScanLine,
   UploadCloud,
   CheckCircle2,
   AlertCircle,
@@ -19,8 +31,15 @@ import {
   RotateCw,
   X,
   FileText,
+  SlidersHorizontal,
 } from "lucide-react";
-import { InventoryItem, ParsedReceiptData, ParsedItemPayload, GARAGE_CATEGORIES, GarageCategory } from "../types.ts";
+import {
+  InventoryItem,
+  ParsedReceiptData,
+  ParsedItemPayload,
+  GARAGE_CATEGORIES,
+  GarageCategory,
+} from "../types.ts";
 import { formatNpr } from "../utils/currency.ts";
 
 interface BoxQrScannerProps {
@@ -41,7 +60,26 @@ interface DecodedBoxData {
   unitCost: number;
   category?: GarageCategory;
   vendor?: string;
+  format?: string;
 }
+
+// Global cached ZXing MultiFormat reader for 1D Barcodes and 2D codes
+const zxReader = new MultiFormatReader();
+const zxHints = new Map();
+zxHints.set(DecodeHintType.POSSIBLE_FORMATS, [
+  BarcodeFormat.QR_CODE,
+  BarcodeFormat.CODE_128,
+  BarcodeFormat.CODE_39,
+  BarcodeFormat.CODE_93,
+  BarcodeFormat.EAN_13,
+  BarcodeFormat.EAN_8,
+  BarcodeFormat.UPC_A,
+  BarcodeFormat.UPC_E,
+  BarcodeFormat.ITF,
+  BarcodeFormat.CODABAR,
+]);
+zxHints.set(DecodeHintType.TRY_HARDER, true);
+zxReader.setHints(zxHints);
 
 export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
   onParsedSuccess,
@@ -51,11 +89,14 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
 
+  // Scanner option: "all" (QR + Barcode), "qr" (QR Code only), "barcode" (1D Barcode only)
+  const [scanFormat, setScanFormat] = useState<"all" | "qr" | "barcode">("all");
+
   // Inventory state for matching
   const [inventoryList, setInventoryList] = useState<InventoryItem[]>([]);
   const [isLoadingInventory, setIsLoadingInventory] = useState(false);
 
-  // Scanned QR result
+  // Scanned result
   const [scannedResult, setScannedResult] = useState<DecodedBoxData | null>(null);
   const [matchedPart, setMatchedPart] = useState<InventoryItem | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
@@ -71,7 +112,8 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
   const [isRestocking, setIsRestocking] = useState(false);
   const [restockSuccess, setRestockSuccess] = useState<string | null>(null);
 
-  // Sample QR codes with generated images
+  // Sample cards (QR Codes & 1D Barcodes)
+  const [activeSampleTab, setActiveSampleTab] = useState<"qr" | "barcode">("qr");
   const [sampleQrCards, setSampleQrCards] = useState<
     Array<{
       id: string;
@@ -82,6 +124,19 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
       qty: number;
       cost: number;
       qrImage: string;
+    }>
+  >([]);
+
+  const [sampleBarcodeCards, setSampleBarcodeCards] = useState<
+    Array<{
+      id: string;
+      label: string;
+      sku: string;
+      name: string;
+      category: GarageCategory;
+      qty: number;
+      cost: number;
+      barcodeImage: string;
     }>
   >([]);
 
@@ -101,7 +156,7 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
         setInventoryList(json.items);
       }
     } catch (e) {
-      console.error("Failed to load inventory for QR matching:", e);
+      console.error("Failed to load inventory for scanner matching:", e);
     } finally {
       setIsLoadingInventory(false);
     }
@@ -110,13 +165,14 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
   useEffect(() => {
     fetchInventory();
     generateSampleQrCodes();
+    generateSampleBarcodes();
 
     return () => {
       stopCamera();
     };
   }, []);
 
-  // Generate sample QR code data URLs for testing
+  // Generate sample QR code data URLs
   const generateSampleQrCodes = async () => {
     const samples = [
       {
@@ -179,8 +235,78 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
     setSampleQrCards(rendered);
   };
 
-  // Start Live Webcam Scanning
-  const startCamera = async (mode: "environment" | "user" = facingMode) => {
+  // Generate sample 1D Barcodes with JsBarcode
+  const generateSampleBarcodes = () => {
+    const barcodeSamples = [
+      {
+        id: "bar-1",
+        label: "Motul 7100 10W-40 Synthetic (1L)",
+        sku: "MOT-7100-10W40",
+        name: "Motul 7100 4T 10W-40 Synthetic Oil (1L)",
+        category: "Oils & Fluids" as GarageCategory,
+        qty: 6,
+        cost: 18.5,
+      },
+      {
+        id: "bar-2",
+        label: "Brembo Front Sintered Brake Pads 07BB",
+        sku: "BRK-PAD-07BB",
+        name: "Brembo Sintered Front Brake Pads 07BB",
+        category: "Braking" as GarageCategory,
+        qty: 4,
+        cost: 42.0,
+      },
+      {
+        id: "bar-3",
+        label: "NGK Laser Iridium Spark Plug CR9EIA",
+        sku: "SPK-NGK-CR9E",
+        name: "NGK Laser Iridium Spark Plug CR9EIA-9",
+        category: "Electrical" as GarageCategory,
+        qty: 8,
+        cost: 16.5,
+      },
+      {
+        id: "bar-4",
+        label: "K&N Oil Filter KN-204-1 Black",
+        sku: "FLT-KN-KN204",
+        name: "K&N Oil Filter KN-204-1 Black",
+        category: "Oils & Fluids" as GarageCategory,
+        qty: 5,
+        cost: 19.99,
+      },
+    ];
+
+    const rendered = barcodeSamples.map((s) => {
+      try {
+        const canvas = document.createElement("canvas");
+        JsBarcode(canvas, s.sku, {
+          format: "CODE128",
+          width: 2,
+          height: 50,
+          displayValue: true,
+          font: "monospace",
+          fontSize: 12,
+          background: "#ffffff",
+          lineColor: "#0f172a",
+          margin: 8,
+        });
+        return { ...s, barcodeImage: canvas.toDataURL("image/png") };
+      } catch (err) {
+        return { ...s, barcodeImage: "" };
+      }
+    });
+
+    setSampleBarcodeCards(rendered);
+  };
+
+  // Start Live Camera Scanning
+  const startCamera = async (
+    mode: "environment" | "user" = facingMode,
+    forcedFormat?: "all" | "qr" | "barcode"
+  ) => {
+    if (forcedFormat) {
+      setScanFormat(forcedFormat);
+    }
     setCameraError(null);
     stopCamera();
 
@@ -203,12 +329,12 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
       }
 
       setIsCameraActive(true);
-      startScanningLoop();
+      startScanningLoop(forcedFormat || scanFormat);
     } catch (err: any) {
       console.error("Camera access failed:", err);
       setCameraError(
         err?.message ||
-          "Unable to access camera. Please check browser camera permissions or upload a QR image."
+          "Unable to access camera. Please check camera permissions or upload an image file."
       );
       setIsCameraActive(false);
     }
@@ -237,13 +363,13 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
     }
   };
 
-  // Scanning loop on the canvas
-  const startScanningLoop = () => {
+  // Scanning loop on the canvas (supports both QR codes and 1D Barcodes)
+  const startScanningLoop = (activeFormat: "all" | "qr" | "barcode" = scanFormat) => {
     if (scanIntervalRef.current) {
       clearInterval(scanIntervalRef.current);
     }
 
-    scanIntervalRef.current = window.setInterval(() => {
+    scanIntervalRef.current = window.setInterval(async () => {
       if (!videoRef.current || !canvasRef.current || videoRef.current.readyState !== 4) {
         return;
       }
@@ -258,27 +384,104 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: "dontInvert",
-      });
 
-      if (code && code.data) {
-        // QR Code detected!
-        handleQrDetected(code.data, canvas.toDataURL("image/jpeg"));
-        stopCamera();
+      // 1. Check for QR Code via jsQR if mode is "all" or "qr"
+      if (activeFormat === "all" || activeFormat === "qr") {
+        const qr = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: "dontInvert",
+        });
+
+        if (qr && qr.data) {
+          handleDetected(qr.data, canvas.toDataURL("image/jpeg"), "QR Code");
+          stopCamera();
+          return;
+        }
       }
-    }, 180);
+
+      // 2. Try native Hardware BarcodeDetector if available in browser
+      if (typeof window !== "undefined" && "BarcodeDetector" in window) {
+        try {
+          const detector = new (window as any).BarcodeDetector({
+            formats: [
+              "qr_code",
+              "code_128",
+              "code_39",
+              "ean_13",
+              "ean_8",
+              "upc_a",
+              "upc_e",
+            ],
+          });
+          const detected = await detector.detect(canvas);
+          if (detected && detected.length > 0 && detected[0].rawValue) {
+            const raw = detected[0].rawValue;
+            const fmt = detected[0].format || "barcode";
+            const isQr = fmt === "qr_code";
+
+            // Enforce format constraint if selected
+            if (
+              activeFormat === "all" ||
+              (activeFormat === "qr" && isQr) ||
+              (activeFormat === "barcode" && !isQr)
+            ) {
+              const readableFormat = isQr
+                ? "QR Code"
+                : `1D Barcode (${fmt.toUpperCase().replace("_", "-")})`;
+              handleDetected(raw, canvas.toDataURL("image/jpeg"), readableFormat);
+              stopCamera();
+              return;
+            }
+          }
+        } catch (e) {
+          // Fall through to ZXing MultiFormatReader
+        }
+      }
+
+      // 3. Fallback: Multi-Format 1D Barcode & QR Reader via @zxing/library
+      if (activeFormat === "all" || activeFormat === "barcode") {
+        try {
+          const luminanceSource = new RGBLuminanceSource(
+            new Uint8ClampedArray(imageData.data),
+            imageData.width,
+            imageData.height
+          );
+          const binaryBitmap = new BinaryBitmap(new HybridBinarizer(luminanceSource));
+          const result = zxReader.decode(binaryBitmap);
+
+          if (result && result.getText()) {
+            const fmt = result.getBarcodeFormat();
+            const formatName = BarcodeFormat[fmt] || "1D Barcode";
+            const isQr = formatName === "QR_CODE";
+
+            if (activeFormat === "all" || !isQr) {
+              const displayFormat = isQr
+                ? "QR Code"
+                : `1D Barcode (${formatName.replace("_", "-")})`;
+              handleDetected(
+                result.getText(),
+                canvas.toDataURL("image/jpeg"),
+                displayFormat
+              );
+              stopCamera();
+              return;
+            }
+          }
+        } catch (err) {
+          // Expected: no code detected in this video frame
+        }
+      }
+    }, 150);
   };
 
-  // Decode QR String payload (handles JSON, SKU prefixes, or plain strings)
-  const parseQrText = (text: string): DecodedBoxData => {
+  // Decode String payload (handles JSON, SKU prefixes, 1D barcode numbers, or plain strings)
+  const parseScannedText = (text: string, formatName?: string): DecodedBoxData => {
     const trimmed = text.trim();
     let sku = "";
     let name = "";
     let quantity = 1;
     let unitCost = 0;
     let category: GarageCategory | undefined = undefined;
-    let vendor = "Box QR Delivery";
+    let vendor = "Box Scanner Delivery";
 
     try {
       // Try JSON format
@@ -301,8 +504,18 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
       if (skuMatch && skuMatch[1]) {
         sku = skuMatch[1];
       } else {
-        // Assume entire text or first word is the SKU
-        sku = trimmed.split(/[\s,;|]/)[0] || trimmed;
+        // Look up if any inventory item matches by SKU or ID directly
+        const exactMatch = inventoryList.find(
+          (i) =>
+            i.sku.toUpperCase() === trimmed.toUpperCase() ||
+            i.id.toLowerCase() === trimmed.toLowerCase()
+        );
+        if (exactMatch) {
+          sku = exactMatch.sku;
+          name = exactMatch.name;
+        } else {
+          sku = trimmed.split(/[\s,;|]/)[0] || trimmed;
+        }
       }
     }
 
@@ -314,12 +527,13 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
       unitCost: Math.max(0, unitCost),
       category,
       vendor,
+      format: formatName || "Auto-Detected",
     };
   };
 
   // Handle detection from camera or uploaded file
-  const handleQrDetected = (rawText: string, dataUrl?: string) => {
-    const decoded = parseQrText(rawText);
+  const handleDetected = (rawText: string, dataUrl?: string, formatName?: string) => {
+    const decoded = parseScannedText(rawText, formatName);
     setScannedResult(decoded);
     setRestockQty(decoded.quantity || 1);
     setRestockSuccess(null);
@@ -331,9 +545,9 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
     // Match against local inventory
     const matched = inventoryList.find(
       (item) =>
-        item.sku.toUpperCase() === decoded.sku ||
+        item.sku.toUpperCase() === decoded.sku.toUpperCase() ||
         (decoded.name && item.name.toLowerCase() === decoded.name.toLowerCase()) ||
-        item.id === decoded.sku.toLowerCase()
+        item.id.toLowerCase() === decoded.sku.toLowerCase()
     );
 
     if (matched) {
@@ -351,7 +565,7 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
     }
   };
 
-  // Handle uploaded image file
+  // Handle uploaded image file (supports both QR codes & 1D Barcodes)
   const handleFileUpload = (file: File) => {
     if (!file) return;
     const reader = new FileReader();
@@ -359,69 +573,85 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return;
+
         canvas.width = img.width;
         canvas.height = img.height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: "dontInvert",
-          });
+        ctx.drawImage(img, 0, 0);
 
-          if (code && code.data) {
-            handleQrDetected(code.data, canvas.toDataURL("image/jpeg"));
-          } else {
-            setCameraError(
-              "No QR code found in this photo. Please make sure the QR label is centered and clearly lit."
-            );
-          }
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        // 1. Check for QR Code
+        const qr = jsQR(imageData.data, imageData.width, imageData.height);
+        if (qr && qr.data) {
+          handleDetected(qr.data, canvas.toDataURL("image/jpeg"), "QR Code");
+          return;
         }
+
+        // 2. Check for 1D Barcode with ZXing
+        try {
+          const luminanceSource = new RGBLuminanceSource(
+            new Uint8ClampedArray(imageData.data),
+            imageData.width,
+            imageData.height
+          );
+          const binaryBitmap = new BinaryBitmap(new HybridBinarizer(luminanceSource));
+          const result = zxReader.decode(binaryBitmap);
+          if (result && result.getText()) {
+            const fmt = result.getBarcodeFormat();
+            const formatName = BarcodeFormat[fmt] || "1D Barcode";
+            handleDetected(
+              result.getText(),
+              canvas.toDataURL("image/jpeg"),
+              `Barcode (${formatName.replace("_", "-")})`
+            );
+            return;
+          }
+        } catch (err) {
+          // No barcode found
+        }
+
+        setCameraError(
+          "Could not detect a valid QR code or 1D barcode in the uploaded image. Please try a clearer picture."
+        );
       };
       img.src = e.target?.result as string;
     };
     reader.readAsDataURL(file);
   };
 
-  // ACTION 1: Quick Restock directly into inventory
+  // Handle 1-Click Quick Restock into SQLite inventory
   const handleQuickRestock = async () => {
     if (!scannedResult) return;
     setIsRestocking(true);
     setRestockSuccess(null);
 
+    const qty = Number(restockQty) || 1;
+    const cost = Number(unitCost) || 0;
+
     try {
       if (matchedPart) {
-        // Increment stock
-        const newStock = Number(matchedPart.stock_quantity) + Number(restockQty);
-        const res = await fetch(`/api/inventory/${matchedPart.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            selling_price: matchedPart.selling_price,
-            location_bin: newBinLocation,
-          }),
-        });
-
-        // Also add manual adjustment stock log
-        await fetch("/api/inventory", {
+        const res = await fetch(`/api/inventory/${matchedPart.id}/increment`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            sku: matchedPart.sku,
-            name: matchedPart.name,
-            category: matchedPart.category,
-            stock_quantity: newStock,
-            last_purchased_cost: unitCost,
-            selling_price: matchedPart.selling_price,
-            location_bin: newBinLocation,
+            delta: qty,
+            reason: `Direct Scanner Restock (${scannedResult.format || "Code"}) from ${scannedResult.vendor || "Warehouse"}`,
+            unit_cost: cost,
           }),
-        }).catch(() => {});
+        });
 
-        setRestockSuccess(
-          `Successfully restocked ${restockQty}x "${matchedPart.name}"! Total stock is now ${newStock}.`
-        );
+        const json = await res.json();
+        if (res.ok) {
+          setRestockSuccess(
+            `Successfully restocked +${qty} units of "${matchedPart.name}". New Stock: ${json.newStock}`
+          );
+          fetchInventory();
+        } else {
+          alert(json.error || "Failed to update inventory.");
+        }
       } else {
-        // Create new part
         const res = await fetch("/api/inventory", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -429,48 +659,51 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
             sku: scannedResult.sku,
             name: newPartName,
             category: newCategory,
-            stock_quantity: restockQty,
-            reorder_threshold: 3,
-            last_purchased_cost: unitCost,
-            selling_price: Number((unitCost * 1.35).toFixed(2)),
+            stock_quantity: qty,
+            reorder_threshold: 2,
+            last_purchased_cost: cost,
+            selling_price: Number((cost * 1.4).toFixed(2)),
             location_bin: newBinLocation,
           }),
         });
+
         const json = await res.json();
-        if (!res.ok) throw new Error(json.error || "Failed to create part");
-
-        setRestockSuccess(
-          `Created and stocked new part "${newPartName}" with SKU ${scannedResult.sku} (${restockQty} units)!`
-        );
+        if (res.ok) {
+          setRestockSuccess(
+            `Registered new inventory part "${newPartName}" with +${qty} initial units.`
+          );
+          fetchInventory();
+          if (json.item) {
+            setMatchedPart(json.item);
+          }
+        } else {
+          alert(json.error || "Failed to create inventory part.");
+        }
       }
-
-      await fetchInventory();
-    } catch (err: any) {
-      setCameraError(err?.message || "Failed to update inventory.");
+    } catch (e: any) {
+      console.error("Restock failed:", e);
+      alert(e.message || "Failed to complete restock.");
     } finally {
       setIsRestocking(false);
     }
   };
 
-  // ACTION 2: Send Linked Part to Receipt Verification Intake Pipeline
+  // Push into Main OCR Verification Flow
   const handleSendToVerification = async () => {
     if (!scannedResult) return;
 
-    const qty = Math.max(1, Number(restockQty) || 1);
-    const cost = Math.max(0, Number(unitCost) || 0);
+    const qty = Number(restockQty) || 1;
+    const cost = Number(unitCost) || 0;
     const lineTotal = Number((qty * cost).toFixed(2));
-    const now = new Date().toISOString();
-    const today = now.split("T")[0];
 
-    // Build synthetic QR delivery receipt payload
     const parsedData: ParsedReceiptData = {
-      vendor_name: scannedResult.vendor || "Box QR Supplier Intake",
-      transaction_date: today,
-      receipt_number: `QR-BOX-${scannedResult.sku}-${Date.now().toString().slice(-4)}`,
+      vendor_name: scannedResult.vendor || "Box Barcode Delivery",
+      transaction_date: new Date().toISOString().split("T")[0],
+      receipt_number: `SCAN-${scannedResult.sku}-${Date.now().toString().slice(-4)}`,
       subtotal: lineTotal,
       tax: 0,
       total_amount: lineTotal,
-      notes: `Restock received via QR code box scan on shelf bin: ${newBinLocation}`,
+      notes: `Restock received via ${scannedResult.format || "Scanner"} on shelf bin: ${newBinLocation}`,
       items: [
         {
           part_name: matchedPart ? matchedPart.name : newPartName,
@@ -487,7 +720,6 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
       ],
     };
 
-    // Use captured image or generate a clean QR code label image
     let imageToPass = qrDataUrl;
     if (!imageToPass) {
       imageToPass = await QRCode.toDataURL(scannedResult.rawText, {
@@ -499,7 +731,7 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
     onParsedSuccess(
       parsedData,
       imageToPass,
-      `QR_Label_${scannedResult.sku}.png`,
+      `Label_${scannedResult.sku}.png`,
       "image/png"
     );
   };
@@ -512,15 +744,18 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
           <div>
             <div className="flex items-center space-x-2 mb-1.5">
               <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-bold uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono">
-                <QrCode className="w-3.5 h-3.5 mr-1" />
-                QR Box Scanner &amp; Inventory Linker
+                <ScanBarcode className="w-3.5 h-3.5 mr-1" />
+                Live Camera Scanner: QR &amp; Barcodes
+              </span>
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                Code-128 &bull; EAN-13 &bull; UPC &bull; 2D QR
               </span>
             </div>
             <h3 className="text-xl font-black text-white font-mono">
-              Scan Parts Boxes &amp; Bin QR Labels
+              Parts Box QR Code &amp; 1D Barcode Scanner
             </h3>
             <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
-              Instantly identify parts and cross-reference your garage inventory by pointing your device camera at QR codes on supplier boxes or shelf bin tags.
+              Instantly scan QR code box tags or standard 1D barcodes on spare parts packaging with your camera. Cross-reference parts against your local SQLite database with automatic stock updating.
             </p>
           </div>
 
@@ -546,26 +781,80 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
         {/* Left Column: Camera Viewfinder or Upload (7 cols) */}
         <div className="lg:col-span-7 space-y-4">
           <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
+            {/* Viewfinder Header & Format Mode Switcher */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-1">
               <div className="flex items-center space-x-2 text-sm font-bold text-white font-mono">
                 <Camera className="w-4 h-4 text-amber-400" />
-                <span>Live Viewfinder</span>
+                <span>Camera Viewfinder</span>
               </div>
 
-              {isCameraActive && (
+              {/* Format Filter Options (All vs QR vs Barcode) */}
+              <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-lg border border-slate-800 self-start sm:self-auto text-xs font-mono">
                 <button
                   type="button"
-                  onClick={toggleCameraFacing}
-                  className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono flex items-center space-x-1 border border-slate-700"
-                  title="Switch front/back camera"
+                  onClick={() => {
+                    setScanFormat("all");
+                    if (isCameraActive) startScanningLoop("all");
+                  }}
+                  className={`px-2.5 py-1 rounded transition-colors flex items-center space-x-1 ${
+                    scanFormat === "all"
+                      ? "bg-amber-500 text-slate-950 font-bold"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                  title="Detect both QR codes and 1D barcodes"
                 >
-                  <RotateCw className="w-3 h-3" />
-                  <span>Flip ({facingMode === "environment" ? "Rear" : "Front"})</span>
+                  <ScanBarcode className="w-3 h-3" />
+                  <span>All Formats</span>
                 </button>
-              )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScanFormat("qr");
+                    if (isCameraActive) startScanningLoop("qr");
+                  }}
+                  className={`px-2.5 py-1 rounded transition-colors flex items-center space-x-1 ${
+                    scanFormat === "qr"
+                      ? "bg-amber-500 text-slate-950 font-bold"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                  title="Scan 2D QR codes only"
+                >
+                  <QrCode className="w-3 h-3" />
+                  <span>QR Code</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScanFormat("barcode");
+                    if (isCameraActive) startScanningLoop("barcode");
+                  }}
+                  className={`px-2.5 py-1 rounded transition-colors flex items-center space-x-1 ${
+                    scanFormat === "barcode"
+                      ? "bg-amber-500 text-slate-950 font-bold"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                  title="Scan 1D barcodes only (EAN-13, UPC, Code 128)"
+                >
+                  <Barcode className="w-3 h-3" />
+                  <span>1D Barcode</span>
+                </button>
+
+                {isCameraActive && (
+                  <button
+                    type="button"
+                    onClick={toggleCameraFacing}
+                    className="ml-1 p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                    title="Switch camera"
+                  >
+                    <RotateCw className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Viewfinder Frame */}
+            {/* Viewfinder Frame (Targeted Element) */}
             <div className="relative aspect-video max-h-80 w-full bg-slate-950 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center">
               {isCameraActive ? (
                 <>
@@ -576,67 +865,165 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
                     muted
                     className="w-full h-full object-cover"
                   />
-                  {/* Hidden Canvas for QR Analysis */}
+                  {/* Hidden Canvas for Frame Analysis */}
                   <canvas ref={canvasRef} className="hidden" />
+
+                  {/* Mode Indicator Overlay */}
+                  <div className="absolute top-3 left-3 bg-slate-950/80 backdrop-blur-xs px-2.5 py-1 rounded-md border border-slate-700 text-[10px] font-mono flex items-center space-x-1.5 text-amber-300">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span className="uppercase font-bold">
+                      {scanFormat === "all"
+                        ? "Scanning: QR & Barcodes"
+                        : scanFormat === "qr"
+                        ? "Scanning: QR Code Only"
+                        : "Scanning: 1D Barcode Only"}
+                    </span>
+                  </div>
 
                   {/* Targeted Crosshair Reticle Overlay */}
                   <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                    <div className="w-48 h-48 sm:w-56 sm:h-56 border-2 border-dashed border-amber-400/80 rounded-2xl relative shadow-[0_0_20px_rgba(245,158,11,0.2)]">
-                      {/* Animated Laser Scan Line */}
-                      <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent shadow-[0_0_8px_#f59e0b] animate-bounce"></div>
-                      <span className="absolute -bottom-6 left-0 right-0 text-center font-mono text-[10px] text-amber-300 uppercase tracking-widest bg-slate-950/80 py-0.5 rounded">
-                        Aim at Box QR Code
-                      </span>
-                    </div>
+                    {scanFormat === "barcode" ? (
+                      /* Barcode Laser Reticle (Wide horizontal bar with red laser line) */
+                      <div className="w-64 sm:w-80 h-28 sm:h-32 border-2 border-dashed border-red-500/80 rounded-xl relative shadow-[0_0_25px_rgba(239,68,68,0.25)] flex items-center justify-center">
+                        <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-red-500 to-transparent shadow-[0_0_10px_#ef4444] animate-pulse"></div>
+                        <span className="absolute -bottom-6 left-0 right-0 text-center font-mono text-[10px] text-red-400 uppercase tracking-widest bg-slate-950/90 py-0.5 rounded border border-red-500/30">
+                          Align Red Laser Across Barcode
+                        </span>
+                      </div>
+                    ) : scanFormat === "qr" ? (
+                      /* QR Code Reticle (Square) */
+                      <div className="w-48 h-48 sm:w-56 sm:h-56 border-2 border-dashed border-amber-400/80 rounded-2xl relative shadow-[0_0_20px_rgba(245,158,11,0.2)]">
+                        <div className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent shadow-[0_0_8px_#f59e0b] animate-bounce"></div>
+                        <span className="absolute -bottom-6 left-0 right-0 text-center font-mono text-[10px] text-amber-300 uppercase tracking-widest bg-slate-950/90 py-0.5 rounded border border-amber-500/30">
+                          Aim at Box QR Code
+                        </span>
+                      </div>
+                    ) : (
+                      /* Hybrid Reticle (All Formats) */
+                      <div className="w-56 sm:w-64 h-44 sm:h-48 border-2 border-dashed border-amber-400/80 rounded-2xl relative shadow-[0_0_20px_rgba(245,158,11,0.25)] flex items-center justify-center">
+                        <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent shadow-[0_0_8px_#f59e0b] animate-pulse"></div>
+                        <span className="absolute -bottom-6 left-0 right-0 text-center font-mono text-[10px] text-amber-300 uppercase tracking-widest bg-slate-950/90 py-0.5 rounded border border-amber-500/30">
+                          Aim at QR Code or 1D Barcode
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (
-                <div className="p-6 text-center space-y-3">
-                  <div className="w-14 h-14 mx-auto rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-amber-400">
-                    <QrCode className="w-7 h-7" />
+                /* Idle Standby Card (Direct Target of CSS Selector 1) */
+                <div className="p-6 text-center space-y-3.5 max-w-md mx-auto">
+                  <div className="flex items-center justify-center space-x-3">
+                    <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-inner">
+                      <QrCode className="w-6 h-6" />
+                    </div>
+                    <span className="text-slate-600 font-mono text-sm">+</span>
+                    <div className="w-12 h-12 rounded-xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 shadow-inner">
+                      <Barcode className="w-6 h-6" />
+                    </div>
                   </div>
+
                   <div>
-                    <p className="text-sm font-bold text-slate-200">
-                      Camera scanner is currently idle
+                    <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-[11px] font-mono font-bold bg-slate-900 text-amber-300 border border-slate-800 mb-1">
+                      <span>Ready to Scan:</span>
+                      <span className="text-white capitalize">
+                        {scanFormat === "all"
+                          ? "QR Codes & 1D Barcodes"
+                          : scanFormat === "qr"
+                          ? "2D QR Codes"
+                          : "1D Barcodes"}
+                      </span>
+                    </div>
+                    <p className="text-sm font-bold text-white font-mono">
+                      Camera Scanner is Standby
                     </p>
-                    <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                      Start the camera to scan box labels directly, or upload an image file of a QR code below.
+                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                      Choose an option to start scanning box labels or spare parts barcodes (EAN-13, UPC, Code-128, QR).
                     </p>
+                  </div>
+
+                  {/* Format Mode Pills & Instant Start */}
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => startCamera(facingMode, "all")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border flex items-center space-x-1.5 ${
+                        scanFormat === "all"
+                          ? "bg-amber-500 text-slate-950 border-amber-400 shadow"
+                          : "bg-slate-900 text-slate-300 border-slate-700 hover:text-white"
+                      }`}
+                    >
+                      <ScanBarcode className="w-3.5 h-3.5" />
+                      <span>Start All (QR + Barcode)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => startCamera(facingMode, "barcode")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border flex items-center space-x-1.5 ${
+                        scanFormat === "barcode"
+                          ? "bg-amber-500 text-slate-950 border-amber-400 shadow"
+                          : "bg-slate-900 text-slate-300 border-slate-700 hover:text-white"
+                      }`}
+                    >
+                      <Barcode className="w-3.5 h-3.5" />
+                      <span>Start Barcode</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => startCamera(facingMode, "qr")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border flex items-center space-x-1.5 ${
+                        scanFormat === "qr"
+                          ? "bg-amber-500 text-slate-950 border-amber-400 shadow"
+                          : "bg-slate-900 text-slate-300 border-slate-700 hover:text-white"
+                      }`}
+                    >
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>Start QR</span>
+                    </button>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Controls */}
+            {/* Controls Bar */}
             <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
               {!isCameraActive ? (
                 <button
                   type="button"
                   onClick={() => startCamera()}
-                  className="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs flex items-center space-x-2 shadow transition-all"
+                  className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs flex items-center space-x-2 shadow-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer"
                 >
                   <Camera className="w-4 h-4" />
-                  <span>Start Camera Scanner</span>
+                  <span>
+                    Start Camera Scanner (
+                    {scanFormat === "all"
+                      ? "QR + Barcode"
+                      : scanFormat === "qr"
+                      ? "QR Code"
+                      : "1D Barcode"}
+                    )
+                  </span>
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={stopCamera}
-                  className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold font-mono text-xs flex items-center space-x-1.5 transition-colors"
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold font-mono text-xs flex items-center space-x-1.5 transition-colors cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                   <span>Stop Camera</span>
                 </button>
               )}
 
-              {/* Upload QR Photo Button */}
+              {/* Upload Image File Button */}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs font-semibold border border-slate-700 flex items-center space-x-1.5 transition-colors"
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs font-semibold border border-slate-700 flex items-center space-x-1.5 transition-colors cursor-pointer"
               >
                 <UploadCloud className="w-4 h-4 text-sky-400" />
-                <span>Upload QR Image</span>
+                <span>Upload QR / Barcode Photo</span>
               </button>
 
               <input
@@ -648,7 +1035,7 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
               />
             </div>
 
-            {/* Camera or scanning error */}
+            {/* Camera error notification */}
             {cameraError && (
               <div className="p-3 rounded-lg bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex items-start space-x-2">
                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -678,9 +1065,14 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
                     <h4 className="font-bold font-mono text-white text-sm">
                       {matchedPart ? "Part Linked to Inventory" : "New Part Recognized"}
                     </h4>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      SKU: <strong className="text-amber-300">{scannedResult.sku}</strong>
-                    </span>
+                    <div className="flex items-center space-x-2 mt-0.5">
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        SKU: <strong className="text-amber-300">{scannedResult.sku}</strong>
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-sky-400 font-mono font-medium border border-slate-700">
+                        {scannedResult.format || "Scanned Code"}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -692,51 +1084,60 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
                     setRestockSuccess(null);
                   }}
                   className="text-slate-400 hover:text-white p-1"
-                  title="Clear scanned part"
+                  title="Clear scanned code"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* Part Info Summary */}
+              {/* Matched Part Details */}
               {matchedPart ? (
-                <div className="bg-slate-950 border border-emerald-900/40 rounded-lg p-3.5 space-y-2">
+                <div className="bg-slate-950/70 p-3.5 rounded-lg border border-slate-800 space-y-2 font-mono">
                   <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-bold text-white text-xs">{matchedPart.name}</p>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono mt-1 inline-block">
-                        {matchedPart.category}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-[10px] text-slate-400 block">Current In-Stock</span>
-                      <span className="font-mono text-sm font-bold text-emerald-400">
-                        {matchedPart.stock_quantity} units
-                      </span>
-                    </div>
+                    <span className="text-slate-400">Database Name:</span>
+                    <span className="text-white font-bold text-right ml-2">
+                      {matchedPart.name}
+                    </span>
                   </div>
-
-                  <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] font-mono text-slate-400">
-                    <span>Bin: <strong className="text-slate-200">{matchedPart.location_bin || "Workshop Bay"}</strong></span>
-                    <span>Cost: <strong className="text-slate-200">{formatNpr(matchedPart.last_purchased_cost)}</strong></span>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Category:</span>
+                    <span className="text-amber-300 font-semibold">{matchedPart.category}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Current Stock:</span>
+                    <span className="text-emerald-400 font-black text-sm">
+                      {matchedPart.stock_quantity} units on shelf
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Bin Location:</span>
+                    <span className="text-slate-300 font-medium">
+                      {matchedPart.location_bin || "Shelf A-1"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Last Unit Cost:</span>
+                    <span className="text-slate-300">{formatNpr(matchedPart.last_purchased_cost)}</span>
                   </div>
                 </div>
               ) : (
-                <div className="bg-slate-950 border border-amber-900/40 rounded-lg p-3.5 space-y-2">
-                  <p className="text-[11px] text-amber-300">
-                    This part SKU is not in your current database. You can register it and assign a workshop shelf bin:
-                  </p>
+                <div className="space-y-3 bg-slate-950/70 p-3.5 rounded-lg border border-slate-800 font-sans">
+                  <div className="text-[11px] font-mono text-amber-300 bg-amber-500/10 p-2 rounded border border-amber-500/20">
+                    SKU <strong>{scannedResult.sku}</strong> is not yet in the inventory catalog. Configure part details to register it now:
+                  </div>
+
                   <div>
                     <label className="block text-[10px] font-mono text-slate-400 mb-1">
-                      Part Description / Name:
+                      Part Name:
                     </label>
                     <input
                       type="text"
                       value={newPartName}
                       onChange={(e) => setNewPartName(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-white font-mono text-xs"
+                      className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-white text-xs font-mono"
                     />
                   </div>
+
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-[10px] font-mono text-slate-400 mb-1">
@@ -745,7 +1146,7 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
                       <select
                         value={newCategory}
                         onChange={(e) => setNewCategory(e.target.value as GarageCategory)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-xs"
+                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-xs font-mono"
                       >
                         {GARAGE_CATEGORIES.map((cat) => (
                           <option key={cat} value={cat}>
@@ -773,7 +1174,7 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
               <div className="grid grid-cols-2 gap-3 bg-slate-950/60 p-3 rounded-lg border border-slate-800">
                 <div>
                   <label className="block text-[10px] font-mono text-slate-400 mb-1">
-                    Received Box Units:
+                    Received Units:
                   </label>
                   <input
                     type="number"
@@ -846,78 +1247,157 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
               <div className="w-12 h-12 mx-auto rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500">
                 <Package className="w-6 h-6" />
               </div>
-              <h4 className="font-bold text-white text-sm font-mono">No Box Scanned Yet</h4>
+              <h4 className="font-bold text-white text-sm font-mono">No Code Scanned Yet</h4>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Scan a parts box with your camera or click one of the pre-loaded supplier test boxes below to see instant SKU linking and inventory restock in action.
+                Scan a parts box with your camera or click one of the pre-loaded supplier test QR codes or 1D barcodes below to see instant SKU linking in action.
               </p>
             </div>
           )}
         </div>
       </div>
 
-      {/* Instant Test Sample Box Labels */}
+      {/* Instant Test Sample Box Labels (QR Code & 1D Barcode) */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center space-x-2 text-slate-200">
             <Zap className="w-4 h-4 text-amber-400" />
             <span className="font-bold text-sm uppercase tracking-wide font-mono">
-              Fast Test: Click a Sample Parts Box QR Label
+              Fast Test: 1-Click Sample Box Labels
             </span>
           </div>
-          <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
-            1-Click QR Emulation
-          </span>
+
+          {/* Sample Format Pills */}
+          <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-mono">
+            <button
+              type="button"
+              onClick={() => setActiveSampleTab("qr")}
+              className={`px-2.5 py-1 rounded transition-colors flex items-center space-x-1.5 ${
+                activeSampleTab === "qr"
+                  ? "bg-amber-500 text-slate-950 font-bold"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <QrCode className="w-3 h-3" />
+              <span>Sample QR Codes</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveSampleTab("barcode")}
+              className={`px-2.5 py-1 rounded transition-colors flex items-center space-x-1.5 ${
+                activeSampleTab === "barcode"
+                  ? "bg-amber-500 text-slate-950 font-bold"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <Barcode className="w-3 h-3" />
+              <span>Sample 1D Barcodes</span>
+            </button>
+          </div>
         </div>
+
         <p className="text-xs text-slate-400">
-          These simulate actual QR labels printed on delivery boxes from warehouse suppliers. Click any label to trigger instant decoding and part matching:
+          Click any sample code below to emulate scanning a physical parts box with instant decoding and SQLite catalog linkage:
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
-          {sampleQrCards.map((sample) => (
-            <button
-              key={sample.id}
-              type="button"
-              onClick={() => {
-                const payload = JSON.stringify({
-                  sku: sample.sku,
-                  name: sample.name,
-                  category: sample.category,
-                  quantity: sample.qty,
-                  unit_cost: sample.cost,
-                  vendor: "Apex Moto Supply Co.",
-                });
-                handleQrDetected(payload, sample.qrImage);
-              }}
-              className="p-3 rounded-lg bg-slate-950 hover:bg-slate-800/90 border border-slate-800 hover:border-amber-500/50 transition-all text-left group flex flex-col justify-between"
-            >
-              <div>
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div className="w-12 h-12 bg-white rounded p-1 shrink-0 shadow-inner">
-                    <img
-                      src={sample.qrImage}
-                      alt={sample.sku}
-                      className="w-full h-full object-contain"
-                    />
+        {/* QR Code Samples */}
+        {activeSampleTab === "qr" && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+            {sampleQrCards.map((sample) => (
+              <button
+                key={sample.id}
+                type="button"
+                onClick={() => {
+                  const payload = JSON.stringify({
+                    sku: sample.sku,
+                    name: sample.name,
+                    category: sample.category,
+                    quantity: sample.qty,
+                    unit_cost: sample.cost,
+                    vendor: "Apex Moto Supply Co.",
+                  });
+                  handleDetected(payload, sample.qrImage, "QR Code");
+                }}
+                className="p-3 rounded-lg bg-slate-950 hover:bg-slate-800/90 border border-slate-800 hover:border-amber-500/50 transition-all text-left group flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="w-12 h-12 bg-white rounded p-1 shrink-0 shadow-inner">
+                      <img
+                        src={sample.qrImage}
+                        alt={sample.sku}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-amber-400 font-mono font-bold">
+                      {sample.sku}
+                    </span>
                   </div>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-amber-400 font-mono font-bold">
-                    {sample.sku}
-                  </span>
+                  <h5 className="font-bold text-xs text-slate-200 group-hover:text-white line-clamp-1">
+                    {sample.name}
+                  </h5>
+                  <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">
+                    Box Qty: {sample.qty} &bull; Cost: {formatNpr(sample.cost)}
+                  </p>
                 </div>
-                <h5 className="font-bold text-xs text-slate-200 group-hover:text-white line-clamp-1">
-                  {sample.name}
-                </h5>
-                <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">
-                  Box Qty: {sample.qty} • Cost: {formatNpr(sample.cost)}
-                </p>
-              </div>
 
-              <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono text-amber-400 group-hover:text-amber-300">
-                <span>Scan Box</span>
-                <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-              </div>
-            </button>
-          ))}
-        </div>
+                <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono text-amber-400 group-hover:text-amber-300">
+                  <span>Emulate Scan</span>
+                  <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 1D Barcode Samples */}
+        {activeSampleTab === "barcode" && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+            {sampleBarcodeCards.map((sample) => (
+              <button
+                key={sample.id}
+                type="button"
+                onClick={() => {
+                  handleDetected(sample.sku, sample.barcodeImage, "1D Barcode (CODE-128)");
+                }}
+                className="p-3 rounded-lg bg-slate-950 hover:bg-slate-800/90 border border-slate-800 hover:border-sky-500/50 transition-all text-left group flex flex-col justify-between"
+              >
+                <div>
+                  <div className="mb-2 bg-white rounded p-1.5 shadow-inner flex items-center justify-center">
+                    {sample.barcodeImage ? (
+                      <img
+                        src={sample.barcodeImage}
+                        alt={sample.sku}
+                        className="h-10 w-full object-contain"
+                      />
+                    ) : (
+                      <span className="font-mono text-slate-800 text-xs font-bold">
+                        {sample.sku}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-sky-400 font-mono font-bold">
+                      {sample.sku}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono">CODE-128</span>
+                  </div>
+                  <h5 className="font-bold text-xs text-slate-200 group-hover:text-white line-clamp-1">
+                    {sample.name}
+                  </h5>
+                  <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">
+                    Box Qty: {sample.qty} &bull; Cost: {formatNpr(sample.cost)}
+                  </p>
+                </div>
+
+                <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono text-sky-400 group-hover:text-sky-300">
+                  <span>Emulate Barcode</span>
+                  <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

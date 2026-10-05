@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Zap,
   QrCode,
+  ScanBarcode,
   ExternalLink,
 } from "lucide-react";
 import { SAMPLE_RECEIPTS, SampleReceipt } from "../data/sampleReceipts.ts";
@@ -169,10 +170,10 @@ export const ReceiptCapture: React.FC<ReceiptCaptureProps> = ({
                 : "text-slate-400 hover:text-white hover:bg-slate-800"
             }`}
           >
-            <QrCode className="w-4 h-4" />
-            <span>Scan Box QR Label</span>
+            <ScanBarcode className="w-4 h-4" />
+            <span>Scan QR / Barcode</span>
             <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-950/60 text-amber-300 font-normal">
-              Live
+              Camera
             </span>
           </button>
         </div>
