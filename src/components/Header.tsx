@@ -126,12 +126,14 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Open in AI Studio with Different Email */}
             <button
               id="ai-studio-share-btn"
+              type="button"
               onClick={onOpenAiStudioModal}
-              title="Open in Google AI Studio with another email account"
-              className="px-2.5 py-1.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 transition-colors flex items-center space-x-1.5 text-xs font-mono font-semibold"
+              title="Open in Google AI Studio with a different Gmail account"
+              className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-sky-500/15 to-indigo-500/15 hover:from-sky-500/25 hover:to-indigo-500/25 text-sky-300 border border-sky-400/40 hover:border-sky-300 transition-all shadow-sm flex items-center space-x-1.5 text-xs font-mono font-bold cursor-pointer"
             >
-              <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-              <span className="hidden lg:inline">AI Studio Link</span>
+              <Sparkles className="w-3.5 h-3.5 text-sky-300 animate-pulse" />
+              <span className="hidden md:inline">Open in AI Studio (Other Gmail)</span>
+              <span className="md:hidden">AI Studio</span>
             </button>
 
             {/* Low-Stock Notification Bell */}

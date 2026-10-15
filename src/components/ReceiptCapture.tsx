@@ -182,11 +182,12 @@ export const ReceiptCapture: React.FC<ReceiptCaptureProps> = ({
           <button
             type="button"
             onClick={onOpenAiStudioModal}
-            className="text-[11px] font-mono text-sky-400 hover:text-sky-300 flex items-center justify-center sm:justify-end space-x-1.5 px-3 py-1.5 rounded-lg bg-sky-950/40 border border-sky-800/40 hover:bg-sky-950/60 transition-colors"
+            className="text-[11px] font-mono text-sky-300 hover:text-white flex items-center justify-center sm:justify-end space-x-1.5 px-3 py-1.5 rounded-lg bg-sky-950/70 border border-sky-700/60 hover:bg-sky-900/60 transition-all font-bold shadow-xs cursor-pointer"
+            title="Open in Google AI Studio with a different Gmail account"
           >
-            <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-            <span>Open in AI Studio with another email</span>
-            <ExternalLink className="w-3 h-3" />
+            <Sparkles className="w-3.5 h-3.5 text-sky-400 animate-pulse" />
+            <span>Open in AI Studio (Different Gmail)</span>
+            <ExternalLink className="w-3 h-3 text-sky-400" />
           </button>
         )}
       </div>

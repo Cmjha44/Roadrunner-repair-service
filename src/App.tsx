@@ -29,6 +29,7 @@ import {
   Users,
   ArrowRight,
   ShieldAlert,
+  Sparkles,
 } from "lucide-react";
 
 export default function App() {
@@ -291,6 +292,16 @@ export default function App() {
             >
               <Users className="w-3.5 h-3.5 mr-1" />
               <span>Staff Link &amp; Access Codes</span>
+            </button>
+            <span className="text-slate-600">|</span>
+            <button
+              type="button"
+              onClick={() => setIsAiStudioModalOpen(true)}
+              className="text-sky-400 hover:text-sky-300 font-mono flex items-center font-bold"
+              title="Open in Google AI Studio with a different Gmail account"
+            >
+              <Sparkles className="w-3.5 h-3.5 mr-1 text-sky-400 animate-pulse" />
+              <span>Open in AI Studio (Other Gmail)</span>
             </button>
             <span className="text-slate-600">|</span>
             <button

@@ -32,6 +32,7 @@ import {
   X,
   FileText,
   SlidersHorizontal,
+  Play,
 } from "lucide-react";
 import {
   InventoryItem,
@@ -86,6 +87,7 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
   onOpenAiStudioModal,
 }) => {
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [isCameraStarting, setIsCameraStarting] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
 
@@ -299,17 +301,57 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
     setSampleBarcodeCards(rendered);
   };
 
-  // Start Live Camera Scanning
+  // Emulate instant scan of sample parts (1-click test for demo / when physical camera is busy)
+  const handleEmulateDemoScan = (type?: "qr" | "barcode" | "all") => {
+    const targetType = type || scanFormat;
+    if (targetType === "barcode" && sampleBarcodeCards.length > 0) {
+      const sample = sampleBarcodeCards[0];
+      handleDetected(sample.sku, sample.barcodeImage, "1D Barcode (CODE-128)");
+    } else if (sampleQrCards.length > 0) {
+      const sample = sampleQrCards[0];
+      const payload = JSON.stringify({
+        sku: sample.sku,
+        name: sample.name,
+        category: sample.category,
+        quantity: sample.qty,
+        unit_cost: sample.cost,
+        vendor: "Apex Moto Supply Co.",
+      });
+      handleDetected(payload, sample.qrImage, "QR Code");
+    }
+  };
+
+  // Start Live Camera Scanning with robust multi-stage fallback & hardware release
   const startCamera = async (
     mode: "environment" | "user" = facingMode,
     forcedFormat?: "all" | "qr" | "barcode"
   ) => {
+    const activeFmt = forcedFormat || scanFormat;
     if (forcedFormat) {
       setScanFormat(forcedFormat);
     }
     setCameraError(null);
-    stopCamera();
+    setIsCameraStarting(true);
 
+    // If stream is active, stop it cleanly and give the browser/OS camera pipeline time to release
+    if (streamRef.current) {
+      stopCamera();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    } else {
+      stopCamera();
+    }
+
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      setCameraError(
+        "Camera API is not supported in this browser environment. You can upload an image or click 'Emulate Demo Scan' below."
+      );
+      setIsCameraStarting(false);
+      return;
+    }
+
+    let stream: MediaStream | null = null;
+
+    // Stage 1: Try with ideal dimensions & requested facingMode
     try {
       const constraints: MediaStreamConstraints = {
         video: {
@@ -318,26 +360,81 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
           height: { ideal: 720 },
         },
       };
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err1: any) {
+      console.warn("Camera attempt 1 (ideal 720p constraints) failed, attempting fallback:", err1);
+      // Wait for camera hardware driver to settle
+      await new Promise((resolve) => setTimeout(resolve, 250));
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      // Stage 2: Try facingMode only without strict width/height
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: mode },
+        });
+      } catch (err2: any) {
+        console.warn("Camera attempt 2 (facingMode only) failed, attempting basic video:", err2);
+        await new Promise((resolve) => setTimeout(resolve, 250));
+
+        // Stage 3: Try simple video: true
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        } catch (err3: any) {
+          // Graceful handling of hardware errors without throwing fatal console.error
+          console.warn("Camera access failed across all constraint levels:", err3);
+
+          const isDeviceInUse =
+            err3?.name === "NotReadableError" ||
+            err3?.name === "TrackStartError" ||
+            err1?.name === "NotReadableError" ||
+            err1?.name === "TrackStartError" ||
+            err2?.name === "NotReadableError" ||
+            err3?.message?.toLowerCase().includes("device in use") ||
+            err3?.message?.toLowerCase().includes("could not start video source") ||
+            err1?.message?.toLowerCase().includes("device in use");
+
+          if (isDeviceInUse) {
+            setCameraError(
+              "Camera access failed: Device in use. Another application, browser tab, or software (e.g. Zoom, Google Meet) may be using your camera."
+            );
+          } else if (err3?.name === "NotAllowedError" || err3?.name === "PermissionDeniedError") {
+            setCameraError(
+              "Camera access permission was denied. Please allow camera permissions in your browser address bar."
+            );
+          } else if (err3?.name === "NotFoundError" || err3?.name === "DevicesNotFoundError") {
+            setCameraError(
+              "No camera device was detected on your system. You can upload an image or click 'Emulate Demo Scan'."
+            );
+          } else {
+            setCameraError(
+              err3?.message ||
+                "Unable to access camera. Please check camera permissions or upload an image file."
+            );
+          }
+
+          setIsCameraActive(false);
+          setIsCameraStarting(false);
+          return;
+        }
+      }
+    }
+
+    if (stream) {
       streamRef.current = stream;
-
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.setAttribute("playsinline", "true");
-        await videoRef.current.play();
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn("Video playback was interrupted or delayed:", playErr);
+        }
       }
 
       setIsCameraActive(true);
-      startScanningLoop(forcedFormat || scanFormat);
-    } catch (err: any) {
-      console.error("Camera access failed:", err);
-      setCameraError(
-        err?.message ||
-          "Unable to access camera. Please check camera permissions or upload an image file."
-      );
-      setIsCameraActive(false);
+      setCameraError(null);
+      startScanningLoop(activeFmt);
     }
+    setIsCameraStarting(false);
   };
 
   const stopCamera = () => {
@@ -346,13 +443,20 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
       scanIntervalRef.current = null;
     }
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      try {
+        streamRef.current.getTracks().forEach((track) => {
+          track.stop();
+        });
+      } catch (e) {
+        // Safe track stop
+      }
       streamRef.current = null;
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
     setIsCameraActive(false);
+    setIsCameraStarting(false);
   };
 
   const toggleCameraFacing = () => {
@@ -764,11 +868,11 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
               <button
                 type="button"
                 onClick={onOpenAiStudioModal}
-                className="px-3 py-2 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 font-mono text-xs flex items-center space-x-1.5 transition-colors"
-                title="Open in AI Studio with another email"
+                className="px-3 py-2 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/40 text-sky-300 font-mono text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
+                title="Open in Google AI Studio with a different Gmail account"
               >
-                <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-                <span>Open in AI Studio</span>
+                <Sparkles className="w-3.5 h-3.5 text-sky-400 animate-pulse" />
+                <span>Open in AI Studio (Other Gmail)</span>
                 <ExternalLink className="w-3 h-3" />
               </button>
             )}
@@ -911,77 +1015,265 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
                 </>
               ) : (
                 /* Idle Standby Card (Direct Target of CSS Selector 1) */
-                <div className="p-6 text-center space-y-3.5 max-w-md mx-auto">
-                  <div className="flex items-center justify-center space-x-3">
-                    <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-inner">
-                      <QrCode className="w-6 h-6" />
+                <div className="w-full h-full p-4 sm:p-5 flex flex-col justify-center items-center text-center max-w-lg mx-auto space-y-3">
+                  {cameraError ? (
+                    /* In-Viewfinder Camera Error / Device In Use Recovery Deck */
+                    <div className="w-full bg-slate-900/95 border border-rose-500/40 rounded-xl p-4 sm:p-5 text-left space-y-3 shadow-2xl backdrop-blur-sm animate-fade-in">
+                      <div className="flex items-start justify-between gap-2 border-b border-rose-900/40 pb-2.5">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-8 h-8 rounded-lg bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                            <AlertCircle className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-xs sm:text-sm text-white font-mono flex items-center gap-1.5">
+                              <span>Camera Hardware Busy</span>
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-950 text-rose-300 border border-rose-800 font-normal">
+                                Device In Use
+                              </span>
+                            </h4>
+                            <p className="text-[11px] text-rose-300/90 font-mono mt-0.5">
+                              Another tab, app, or OS process has camera control.
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCameraError(null)}
+                          className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors"
+                          title="Dismiss"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-slate-300 leading-relaxed font-sans">
+                        {cameraError}
+                      </p>
+
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={isCameraStarting}
+                          onClick={() => startCamera(facingMode, scanFormat)}
+                          className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs flex items-center space-x-1.5 shadow transition-all cursor-pointer"
+                        >
+                          <RefreshCw
+                            className={`w-3.5 h-3.5 ${isCameraStarting ? "animate-spin" : ""}`}
+                          />
+                          <span>{isCameraStarting ? "Reconnecting..." : "Retry Camera"}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={toggleCameraFacing}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-mono text-xs flex items-center space-x-1.5 transition-colors cursor-pointer"
+                        >
+                          <RotateCw className="w-3.5 h-3.5 text-sky-400" />
+                          <span>Switch Facing</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleEmulateDemoScan(scanFormat)}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700 text-emerald-300 font-mono text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+                          title="Simulate a real scan with sample motorcycle parts"
+                        >
+                          <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>1-Click Test Code</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-mono text-xs flex items-center space-x-1.5 transition-colors cursor-pointer"
+                        >
+                          <UploadCloud className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Upload Photo</span>
+                        </button>
+                      </div>
                     </div>
-                    <span className="text-slate-600 font-mono text-sm">+</span>
-                    <div className="w-12 h-12 rounded-xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400 shadow-inner">
-                      <Barcode className="w-6 h-6" />
-                    </div>
-                  </div>
+                  ) : (
+                    /* Interactive Standby Scanner Control Hub */
+                    <>
+                      {/* Status Badges & Subtitle */}
+                      <div className="space-y-1">
+                        <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full text-[11px] font-mono font-bold bg-slate-900/90 text-amber-300 border border-slate-800 shadow-inner">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                          <span>Optical Engine Ready</span>
+                          <span className="text-slate-500">&bull;</span>
+                          <span className="text-white">
+                            {scanFormat === "all"
+                              ? "QR & Barcodes"
+                              : scanFormat === "qr"
+                              ? "QR Code Only"
+                              : "1D Barcode Only"}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 max-w-sm mx-auto font-sans leading-tight">
+                          Select a scanner mode to start camera recognition for parts boxes or receipts:
+                        </p>
+                      </div>
 
-                  <div>
-                    <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded text-[11px] font-mono font-bold bg-slate-900 text-amber-300 border border-slate-800 mb-1">
-                      <span>Ready to Scan:</span>
-                      <span className="text-white capitalize">
-                        {scanFormat === "all"
-                          ? "QR Codes & 1D Barcodes"
-                          : scanFormat === "qr"
-                          ? "2D QR Codes"
-                          : "1D Barcodes"}
-                      </span>
-                    </div>
-                    <p className="text-sm font-bold text-white font-mono">
-                      Camera Scanner is Standby
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                      Choose an option to start scanning box labels or spare parts barcodes (EAN-13, UPC, Code-128, QR).
-                    </p>
-                  </div>
+                      {/* 3 Interactive Mode Selector Cards */}
+                      <div className="grid grid-cols-3 gap-2 w-full max-w-md pt-0.5">
+                        {/* Option 1: QR Code */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setScanFormat("qr");
+                            startCamera(facingMode, "qr");
+                          }}
+                          className={`p-2 sm:p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between group cursor-pointer ${
+                            scanFormat === "qr"
+                              ? "bg-amber-500/15 border-amber-500 text-white shadow-[0_0_15px_rgba(245,158,11,0.2)]"
+                              : "bg-slate-900/80 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <div
+                              className={`p-1.5 rounded-lg ${
+                                scanFormat === "qr"
+                                  ? "bg-amber-500 text-slate-950 font-bold"
+                                  : "bg-slate-800 text-amber-400"
+                              }`}
+                            >
+                              <QrCode className="w-4 h-4" />
+                            </div>
+                            <span className="text-[9px] font-mono uppercase font-bold text-amber-400">
+                              2D
+                            </span>
+                          </div>
+                          <div>
+                            <div className="font-mono font-bold text-xs text-white">QR Code</div>
+                            <div className="text-[10px] text-slate-400 font-sans leading-tight mt-0.5 hidden sm:block">
+                              Box tags &amp; receipts
+                            </div>
+                          </div>
+                        </button>
 
-                  {/* Format Mode Pills & Instant Start */}
-                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => startCamera(facingMode, "all")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border flex items-center space-x-1.5 ${
-                        scanFormat === "all"
-                          ? "bg-amber-500 text-slate-950 border-amber-400 shadow"
-                          : "bg-slate-900 text-slate-300 border-slate-700 hover:text-white"
-                      }`}
-                    >
-                      <ScanBarcode className="w-3.5 h-3.5" />
-                      <span>Start All (QR + Barcode)</span>
-                    </button>
+                        {/* Option 2: 1D Barcode */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setScanFormat("barcode");
+                            startCamera(facingMode, "barcode");
+                          }}
+                          className={`p-2 sm:p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between group cursor-pointer ${
+                            scanFormat === "barcode"
+                              ? "bg-sky-500/15 border-sky-400 text-white shadow-[0_0_15px_rgba(56,189,248,0.2)]"
+                              : "bg-slate-900/80 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <div
+                              className={`p-1.5 rounded-lg ${
+                                scanFormat === "barcode"
+                                  ? "bg-sky-400 text-slate-950 font-bold"
+                                  : "bg-slate-800 text-sky-400"
+                              }`}
+                            >
+                              <Barcode className="w-4 h-4" />
+                            </div>
+                            <span className="text-[9px] font-mono uppercase font-bold text-sky-400">
+                              1D
+                            </span>
+                          </div>
+                          <div>
+                            <div className="font-mono font-bold text-xs text-white">Barcode</div>
+                            <div className="text-[10px] text-slate-400 font-sans leading-tight mt-0.5 hidden sm:block">
+                              EAN-13, UPC, Code 128
+                            </div>
+                          </div>
+                        </button>
 
-                    <button
-                      type="button"
-                      onClick={() => startCamera(facingMode, "barcode")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border flex items-center space-x-1.5 ${
-                        scanFormat === "barcode"
-                          ? "bg-amber-500 text-slate-950 border-amber-400 shadow"
-                          : "bg-slate-900 text-slate-300 border-slate-700 hover:text-white"
-                      }`}
-                    >
-                      <Barcode className="w-3.5 h-3.5" />
-                      <span>Start Barcode</span>
-                    </button>
+                        {/* Option 3: Both (QR + Barcode) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setScanFormat("all");
+                            startCamera(facingMode, "all");
+                          }}
+                          className={`p-2 sm:p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between group cursor-pointer ${
+                            scanFormat === "all"
+                              ? "bg-emerald-500/15 border-emerald-400 text-white shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                              : "bg-slate-900/80 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <div
+                              className={`p-1.5 rounded-lg ${
+                                scanFormat === "all"
+                                  ? "bg-emerald-400 text-slate-950 font-bold"
+                                  : "bg-slate-800 text-emerald-400"
+                              }`}
+                            >
+                              <ScanBarcode className="w-4 h-4" />
+                            </div>
+                            <span className="text-[9px] font-mono uppercase font-bold text-emerald-400">
+                              Dual
+                            </span>
+                          </div>
+                          <div>
+                            <div className="font-mono font-bold text-xs text-white">All Formats</div>
+                            <div className="text-[10px] text-slate-400 font-sans leading-tight mt-0.5 hidden sm:block">
+                              Auto-detect 1D &amp; 2D
+                            </div>
+                          </div>
+                        </button>
+                      </div>
 
-                    <button
-                      type="button"
-                      onClick={() => startCamera(facingMode, "qr")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all border flex items-center space-x-1.5 ${
-                        scanFormat === "qr"
-                          ? "bg-amber-500 text-slate-950 border-amber-400 shadow"
-                          : "bg-slate-900 text-slate-300 border-slate-700 hover:text-white"
-                      }`}
-                    >
-                      <QrCode className="w-3.5 h-3.5" />
-                      <span>Start QR</span>
-                    </button>
-                  </div>
+                      {/* Primary Start Camera Button */}
+                      <div className="pt-1 w-full max-w-md">
+                        <button
+                          type="button"
+                          disabled={isCameraStarting}
+                          onClick={() => startCamera(facingMode, scanFormat)}
+                          className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-extrabold font-mono text-xs sm:text-sm flex items-center justify-center space-x-2 shadow-lg hover:shadow-amber-500/25 transition-all transform active:scale-98 cursor-pointer disabled:opacity-75"
+                        >
+                          {isCameraStarting ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin text-slate-950" />
+                              <span>Opening Camera Stream...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Camera className="w-4 h-4 text-slate-950" />
+                              <span>
+                                Start Camera Scanner (
+                                {scanFormat === "all"
+                                  ? "QR + Barcode"
+                                  : scanFormat === "qr"
+                                  ? "QR Code"
+                                  : "1D Barcode"}
+                                )
+                              </span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Fast Emulation / Fallback Hint */}
+                      <div className="flex items-center justify-center space-x-3 text-[11px] font-mono text-slate-400 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleEmulateDemoScan(scanFormat)}
+                          className="hover:text-amber-300 flex items-center space-x-1 underline decoration-dotted transition-colors cursor-pointer"
+                        >
+                          <Zap className="w-3 h-3 text-amber-400" />
+                          <span>1-Click Test Sample Scan</span>
+                        </button>
+                        <span>&bull;</span>
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="hover:text-sky-300 flex items-center space-x-1 underline decoration-dotted transition-colors cursor-pointer"
+                        >
+                          <UploadCloud className="w-3 h-3 text-sky-400" />
+                          <span>Upload Image</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -991,18 +1283,25 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
               {!isCameraActive ? (
                 <button
                   type="button"
+                  disabled={isCameraStarting}
                   onClick={() => startCamera()}
-                  className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs flex items-center space-x-2 shadow-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold font-mono text-xs flex items-center space-x-2 shadow-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer disabled:opacity-75"
                 >
-                  <Camera className="w-4 h-4" />
+                  {isCameraStarting ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Camera className="w-4 h-4" />
+                  )}
                   <span>
-                    Start Camera Scanner (
-                    {scanFormat === "all"
-                      ? "QR + Barcode"
-                      : scanFormat === "qr"
-                      ? "QR Code"
-                      : "1D Barcode"}
-                    )
+                    {isCameraStarting
+                      ? "Starting Camera..."
+                      : `Start Camera Scanner (${
+                          scanFormat === "all"
+                            ? "QR + Barcode"
+                            : scanFormat === "qr"
+                            ? "QR Code"
+                            : "1D Barcode"
+                        })`}
                   </span>
                 </button>
               ) : (
@@ -1037,9 +1336,28 @@ export const BoxQrScanner: React.FC<BoxQrScannerProps> = ({
 
             {/* Camera error notification */}
             {cameraError && (
-              <div className="p-3 rounded-lg bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex items-start space-x-2">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span>{cameraError}</span>
+              <div className="p-3 rounded-lg bg-rose-950/70 border border-rose-800 text-rose-200 text-xs flex items-center justify-between gap-2">
+                <div className="flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <span>{cameraError}</span>
+                </div>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => startCamera(facingMode, scanFormat)}
+                    className="px-2 py-1 rounded bg-rose-900/60 hover:bg-rose-800 text-rose-200 font-mono text-[10px] font-bold border border-rose-700 cursor-pointer"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCameraError(null)}
+                    className="text-rose-400 hover:text-white p-0.5"
+                    title="Dismiss"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             )}
           </div>
